@@ -13,6 +13,7 @@ initPaymentHandlers();
 bot.command('start', async (ctx) => {
     const payload = ctx.match; // Deep link payload
     const user = ctx.user;
+    console.log('/start called by:', user.telegramId);
 
     if (payload && payload.startsWith('pay_')) {
         if (!user.termsAccepted) {

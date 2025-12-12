@@ -11,7 +11,12 @@ export async function authMiddleware(ctx: BotContext, next: NextFunction) {
 
     // Find or create user
     // We don't need 'await dbConnect()' here if it's called in the route handler
+    // Find or create user
+    // We don't need 'await dbConnect()' here if it's called in the route handler
+    console.time('UserFetch');
     let user = await User.findOne({ telegramId });
+    console.timeEnd('UserFetch');
+    console.log('Middleware processing for user:', telegramId, user ? 'Found' : 'New');
 
     if (!user) {
         // Detect language

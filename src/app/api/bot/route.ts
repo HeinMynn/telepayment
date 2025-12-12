@@ -13,12 +13,15 @@ export async function POST(req: Request) {
         await dbConnect();
 
         const body = await req.json();
+        console.log('Webhook Body:', JSON.stringify(body));
 
         // Initialize the bot (fetches info from Telegram if not cached)
         await bot.init();
+        console.log('Bot Initialized. Processing update...');
 
         // Explicitly handle update for maximum control in serverless
         await bot.handleUpdate(body);
+        console.log('Update Handled.');
 
         return new Response('OK');
     } catch (e) {
