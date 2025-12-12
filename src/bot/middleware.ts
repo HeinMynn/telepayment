@@ -7,6 +7,7 @@ export async function authMiddleware(ctx: BotContext, next: NextFunction) {
     if (!ctx.from) return next();
 
     const telegramId = ctx.from.id;
+    const { username, first_name, last_name } = ctx.from;
 
     // Find or create user
     // We don't need 'await dbConnect()' here if it's called in the route handler
@@ -20,8 +21,23 @@ export async function authMiddleware(ctx: BotContext, next: NextFunction) {
         user = await User.create({
             telegramId,
             language,
-            role: 'user',
+            role: (process.env.ADMIN_ID && String(telegramId) === process.env.ADMIN_ID) ? 'admin' : 'user',
+            username,
+            firstName: first_name,
+            lastName: last_name
         });
+    } else {
+        // Update info if changed
+        // Also check if they should be admin now
+        if (process.env.ADMIN_ID && String(telegramId) === process.env.ADMIN_ID && user.role !== 'admin') {
+            user.role = 'admin';
+            await user.save();
+        } else if (user.username !== username || user.firstName !== first_name || user.lastName !== last_name) {
+            user.username = username;
+            user.firstName = first_name;
+            user.lastName = last_name;
+            await user.save();
+        }
     }
 
     // Attach to context
@@ -73,6 +89,15 @@ export async function authMiddleware(ctx: BotContext, next: NextFunction) {
         } else if (ctx.message) {
             await ctx.reply(msg);
         }
+        return;
+    }
+
+    // State Routing
+    if (user.interactionState && user.interactionState !== 'idle') {
+        // Dynamic import to avoid circular dependency if stateHandler imports types that might import middleware? 
+        // Actually imports are fine: stateHandler -> types. middleware -> types.
+        const { handleState } = await import('./stateHandler');
+        await handleState(ctx);
         return;
     }
 

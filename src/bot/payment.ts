@@ -11,38 +11,63 @@ export async function handlePaymentStart(ctx: BotContext, payload: string) {
         return ctx.reply(t(ctx.user.language as any, 'tos_rejected'));
     }
 
-    // format: pay_MERCHANTID_AMOUNT (in cents)
-    const parts = payload.replace('pay_', '').split('_');
-    const merchantTelegramId = parseInt(parts[0]);
-    const amount = parseInt(parts[1]);
+    // format: pay_UNIQUEID
+    const uniqueId = payload.replace('pay_', '');
 
-    if (isNaN(merchantTelegramId) || isNaN(amount)) {
-        return ctx.reply("Invalid invoice link format.");
-    }
+    // Find Invoice
+    const { default: Invoice } = await import('@/models/Invoice');
+    const invoice = await Invoice.findOne({ uniqueId });
 
-    // Check merchant
-    const merchant = await User.findOne({ telegramId: merchantTelegramId });
+    if (!invoice) return ctx.reply("Invoice not found.");
+    if (invoice.status !== 'active') return ctx.reply(`Invoice is ${invoice.status}.`);
+
+    // Check Merchant
+    const merchant = await User.findById(invoice.merchantId);
     if (!merchant) return ctx.reply("Merchant not found.");
 
-    const amountDisplay = (amount / 100).toFixed(2);
+    // Prevent Paying Self
+    if (String(merchant._id) === String(ctx.user._id)) return ctx.reply("You cannot pay yourself.");
 
-    const warning = t(ctx.user.language as any, 'pay_warning')
-        .replace('[Merchant Name]', `User ${merchantTelegramId}`)
-        .replace('[Merchant Name]', merchant.role === 'merchant' ? 'Registered Merchant' : `User ${merchantTelegramId}`) // Simple override
-        .replace('[Amount]', amountDisplay);
+    const amountDisplay = invoice.amount.toLocaleString();
 
+    // Fetch Name
+    let merchantName = `User ${merchant.telegramId}`;
+    let showRealName = true;
+
+    if (merchant.role === 'merchant') {
+        const { default: MerchantProfile } = await import('@/models/MerchantProfile');
+        const profile = await MerchantProfile.findOne({ userId: merchant._id });
+        if (profile && profile.businessName && profile.businessName !== 'Pending Setup') {
+            merchantName = profile.businessName;
+            showRealName = false;
+        }
+    }
+
+    if (showRealName) {
+        // Try to show User Name
+        if (merchant.firstName) {
+            merchantName = `${merchant.firstName} ${merchant.lastName || ''}`.trim();
+        } else if (merchant.username) {
+            merchantName = `@${merchant.username}`;
+        }
+    }
+
+    // Keyboard with InvoiceID
     const keyboard = new InlineKeyboard()
         .text(t(ctx.user.language as any, 'pay_cancel'), 'cancel_payment')
-        .text(t(ctx.user.language as any, 'pay_confirm'), `confirm_pay_${merchantTelegramId}_${amount}`);
+        .text(t(ctx.user.language as any, 'pay_confirm'), `confirm_pay_${invoice._id}`); // Pass ID
 
-    await ctx.reply(`Invoice: $${amountDisplay}\nTo: ${merchantTelegramId}\n\n` + warning, { reply_markup: keyboard });
+    const warning = t(ctx.user.language as any, 'pay_warning').replace('[Merchant Name]', merchantName);
+
+    await ctx.reply(`🧾 <b>Invoice Payment</b>\n\nAmount: ${amountDisplay} MMK\nTo: ${merchantName}\n\n${warning}`, {
+        reply_markup: keyboard,
+        parse_mode: 'HTML'
+    });
 }
 
 export function initPaymentHandlers() {
-    bot.callbackQuery(/^confirm_pay_(\d+)_(\d+)$/, async (ctx) => {
-        const match = ctx.match as RegExpMatchArray;
-        const merchantId = parseInt(match[1]);
-        const amount = parseInt(match[2]);
+    bot.callbackQuery(/^confirm_pay_(.+)$/, async (ctx) => { // Capture ID
+        const invoiceId = ctx.match[1];
 
         // Atomic Transaction
         const session = await mongoose.startSession();
@@ -50,28 +75,52 @@ export function initPaymentHandlers() {
             session.startTransaction();
 
             const sender = await User.findById(ctx.user._id).session(session);
-            const receiver = await User.findOne({ telegramId: merchantId }).session(session);
+            const { default: Invoice } = await import('@/models/Invoice');
+            const invoice = await Invoice.findById(invoiceId).session(session);
 
-            if (!sender || !receiver) throw new Error("User not found");
-
-            if (sender.balance < amount) {
-                await ctx.answerCallbackQuery({ text: t(sender.language as any, 'insufficient_funds'), show_alert: true });
+            if (!invoice) throw new Error("Invoice missing");
+            if (invoice.status !== 'active') {
+                await ctx.answerCallbackQuery({ text: "Invoice expired/revoked", show_alert: true });
                 await session.abortTransaction();
                 return;
             }
 
-            sender.balance -= amount;
-            receiver.balance += amount;
+            const receiver = await User.findById(invoice.merchantId).session(session);
 
-            await sender.save();
-            await receiver.save();
+            if (!sender || !receiver) throw new Error("User not found");
+
+            if (sender.balance < invoice.amount) {
+                await session.abortTransaction();
+                await ctx.answerCallbackQuery(); // No alert
+
+                // Prompt Top Up
+                const { InlineKeyboard } = await import('grammy');
+                const kb = new InlineKeyboard().text("➕ Top Up", "start_topup_flow");
+                await ctx.reply("Insufficient funds. Please top up to continue.", { reply_markup: kb });
+                return;
+            }
+
+            sender.balance -= invoice.amount;
+            receiver.balance += invoice.amount;
+
+            // Handle One-Time Invoice
+            if (invoice.type === 'one-time') {
+                invoice.status = 'completed';
+            }
+            invoice.usageCount += 1;
+            await invoice.save({ session });
+
+            await sender.save({ session });
+            await receiver.save({ session });
 
             await Transaction.create([{
                 fromUser: sender._id,
                 toUser: receiver._id,
-                amount,
+                amount: invoice.amount,
+                invoiceId: invoice._id,
                 status: 'completed',
-                snapshotBalanceBefore: sender.balance + amount, // Reconstruct balance before
+                type: 'payment',
+                snapshotBalanceBefore: sender.balance + invoice.amount,
                 snapshotBalanceAfter: sender.balance
             }], { session });
 
@@ -82,7 +131,7 @@ export function initPaymentHandlers() {
 
             // Notify receiver
             try {
-                await bot.api.sendMessage(receiver.telegramId, `Received $${(amount / 100).toFixed(2)} from ${sender.telegramId}`);
+                await bot.api.sendMessage(receiver.telegramId, `Received ${invoice.amount.toLocaleString()} MMK from ${sender.telegramId} (Ref: ${invoice.uniqueId})`);
             } catch (notifyError) {
                 console.error("Failed to notify receiver:", notifyError);
             }

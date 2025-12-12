@@ -14,6 +14,9 @@ export async function POST(req: Request) {
 
         const body = await req.json();
 
+        // Initialize the bot (fetches info from Telegram if not cached)
+        await bot.init();
+
         // Explicitly handle update for maximum control in serverless
         await bot.handleUpdate(body);
 
