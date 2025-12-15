@@ -82,7 +82,7 @@ export async function handleSubscriptionStart(ctx: BotContext, payload: string) 
 
     const msg = `🛒 <b>Purchase Subscription</b>\n\n` +
         `Channel: <b>${channel.title}</b>\n` +
-        `Plan: ${plan.name} (${plan.durationDays} days)\n` +
+        `Plan: ${plan.name || `${plan.durationMonths} Month(s)`} (${plan.durationMonths} month(s))\n` +
         `Price: <b>${price.toLocaleString()} MMK</b>\n\n` +
         `Your Balance: ${balance.toLocaleString()} MMK`;
 
@@ -119,7 +119,7 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
 
     // Create Subscription
     const endDate = new Date();
-    endDate.setDate(endDate.getDate() + plan.durationDays);
+    endDate.setMonth(endDate.getMonth() + plan.durationMonths);
 
     await Subscription.create({
         userId: user._id,
