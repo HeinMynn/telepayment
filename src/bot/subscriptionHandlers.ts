@@ -194,24 +194,58 @@ export async function handleChannelDetails(ctx: BotContext, channelId: string) {
     if (!ch) return ctx.reply("Channel not found.");
 
     const plans = await SubscriptionPlan.find({ channelId: ch._id, isActive: true });
-
-    let msg = `📢 <b>${ch.title}</b>\n\n`;
     const botUsername = ctx.me.username;
 
+    // ONE link per channel
+    const shareLink = `https://t.me/${botUsername}?start=ch_${ch._id}`;
+
+    let msg = `📢 <b>${ch.title}</b>\n\n`;
+    msg += `🔗 <b>Share Link:</b>\n<code>${shareLink}</code>\n\n`;
+
     if (plans.length > 0) {
-        msg += `<b>Active Plans:</b>\n`;
+        msg += `<b>Active Plans (${plans.length}):</b>\n`;
         plans.forEach((p, i) => {
-            const link = `https://t.me/${botUsername}?start=sub_${p._id}`;
-            msg += `\n${i + 1}. <b>${p.name || (p.durationMonths + ' Months')}</b> - ${p.price.toLocaleString()} MMK\n`;
-            msg += `🔗 Link: <code>${link}</code>\n`;
+            msg += `${i + 1}. ${p.name || (p.durationMonths + ' Months')} - ${p.price.toLocaleString()} MMK\n`;
         });
     } else {
-        msg += `No plans created yet.`;
+        msg += `⚠️ No plans created yet. Add a plan first.`;
     }
 
     const kb = new InlineKeyboard()
         .text(t(l, 'plan_add_btn'), `add_plan_${ch._id}`).row()
-        .text("🔙 Back", `admin_channels_back`); // or merchant_manage_channels implicitly
+        .text("🔙 Back", `admin_channels_back`);
 
     await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
 }
+
+// Handle channel link (ch_CHANNELID) - shows plans to user
+export async function handleChannelStart(ctx: BotContext, payload: string) {
+    const channelId = payload.replace('ch_', '');
+
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { InlineKeyboard } = await import('grammy');
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.reply("❌ Channel not found.");
+
+    const plans = await SubscriptionPlan.find({ channelId: ch._id, isActive: true });
+
+    if (plans.length === 0) {
+        return ctx.reply("❌ No subscription plans available for this channel yet.");
+    }
+
+    let msg = `📢 <b>${ch.title}</b>\n\nChoose a subscription plan:\n`;
+
+    const kb = new InlineKeyboard();
+
+    plans.forEach((p) => {
+        const label = `${p.name || (p.durationMonths + ' Months')} - ${p.price.toLocaleString()} MMK`;
+        kb.text(label, `buy_sub_${p._id}`).row();
+    });
+
+    kb.text("❌ Cancel", "cancel_sub");
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+}
+

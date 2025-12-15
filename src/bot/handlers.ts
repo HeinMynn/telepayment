@@ -43,14 +43,17 @@ bot.command('start', async (ctx) => {
     const user = ctx.user;
     console.log('/start called by:', user.telegramId);
 
-    if (payload && (payload.startsWith('pay_') || payload.startsWith('sub_'))) {
+    if (payload && (payload.startsWith('pay_') || payload.startsWith('sub_') || payload.startsWith('ch_'))) {
         if (!user.termsAccepted) {
             // Defer
             user.tempData = { deferredPayload: payload };
             await user.save();
             // Fall through to ToS check
+        } else if (payload.startsWith('ch_')) {
+            const { handleChannelStart } = await import('./subscriptionHandlers');
+            return handleChannelStart(ctx, payload);
         } else if (payload.startsWith('sub_')) {
-            const { handleSubscriptionStart } = await import('./subscriptionHandlers'); // Fixed import
+            const { handleSubscriptionStart } = await import('./subscriptionHandlers');
             return handleSubscriptionStart(ctx, payload);
         } else {
             return handlePaymentStart(ctx, payload);
@@ -104,7 +107,10 @@ bot.callbackQuery('accept_tos', async (ctx) => {
 
         await ctx.editMessageText(t(user.language as any, 'welcome') + "\n\n✅ Terms Accepted.");
 
-        if (payload.startsWith('sub_')) {
+        if (payload.startsWith('ch_')) {
+            const { handleChannelStart } = await import('./subscriptionHandlers');
+            return handleChannelStart(ctx, payload);
+        } else if (payload.startsWith('sub_')) {
             const { handleSubscriptionStart } = await import('./subscriptionHandlers');
             return handleSubscriptionStart(ctx, payload);
         } else {
