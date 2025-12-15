@@ -58,3 +58,98 @@ export async function showUserSubscriptions(ctx: BotContext, page: number) {
         await ctx.reply(report, { parse_mode: 'HTML', reply_markup: kb });
     }
 }
+
+export async function handleSubscriptionStart(ctx: BotContext, payload: string) {
+    // Payload: sub_PLANID
+    const planId = payload.replace('sub_', '');
+
+    // Import Models
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+    const { default: User } = await import('@/models/User');
+
+    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+
+    if (!plan) {
+        return ctx.reply("❌ Limit Plan or Channel not found.");
+    }
+
+    const channel = plan.channelId as any;
+    const user = ctx.user;
+
+    const price = plan.price;
+    const balance = user.balance;
+
+    const msg = `🛒 <b>Purchase Subscription</b>\n\n` +
+        `Channel: <b>${channel.title}</b>\n` +
+        `Plan: ${plan.name} (${plan.durationDays} days)\n` +
+        `Price: <b>${price.toLocaleString()} MMK</b>\n\n` +
+        `Your Balance: ${balance.toLocaleString()} MMK`;
+
+    const kb = new InlineKeyboard();
+
+    if (balance >= price) {
+        kb.text(`✅ Pay with Balance`, `buy_sub_${plan._id}`); // Handler needed!
+    } else {
+        kb.text(`💰 Top Up Balance`, `topup_start`); // Generic topup
+    }
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+}
+
+export async function handleBuySubscription(ctx: BotContext, planId: string) {
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { default: Subscription } = await import('@/models/Subscription');
+    const { default: Transaction } = await import('@/models/Transaction');
+    const { default: User } = await import('@/models/User');
+
+    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+    if (!plan) return ctx.answerCallbackQuery("Plan not found.");
+
+    const user = await User.findById(ctx.user._id); // Refresh user
+    if (!user) return;
+
+    if (user.balance < plan.price) {
+        return ctx.answerCallbackQuery("Insufficient Balance.");
+    }
+
+    // Deduct
+    user.balance -= plan.price;
+    await user.save();
+
+    // Create Subscription
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + plan.durationDays);
+
+    await Subscription.create({
+        userId: user._id,
+        channelId: plan.channelId._id,
+        planId: plan._id,
+        startDate: new Date(),
+        endDate: endDate,
+        status: 'active'
+    });
+
+    // Create Transaction Record
+    await Transaction.create({
+        fromUser: user._id,
+        toUser: (plan.channelId as any).merchantId, // Pay to Merchant
+        amount: plan.price,
+        type: 'subscription',
+        status: 'completed',
+        details: `Sub: ${plan.name}`
+    });
+
+    // Generate Invite Link
+    try {
+        const invite = await ctx.api.createChatInviteLink((plan.channelId as any).channelId, {
+            member_limit: 1,
+            name: `Sub: ${user.firstName}` // Identify key
+        });
+
+        await ctx.editMessageText(`✅ <b>Subscription Active!</b>\n\nYou have purchased <b>${plan.name}</b>.\n\n🔗 <a href="${invite.invite_link}">Join Channel Now</a>`, { parse_mode: 'HTML' });
+    } catch (e) {
+        console.error("Failed to generate link:", e);
+        await ctx.reply("Subscription active, but failed to generate link. Please contact admin.");
+    }
+}

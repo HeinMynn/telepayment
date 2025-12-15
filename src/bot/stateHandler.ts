@@ -91,8 +91,7 @@ export async function handleState(ctx: BotContext) {
             else if (text === wave) provider = 'Wave Pay';
             else {
                 // Reprompt
-                // Assuming getProviderKeyboard is available or needs to be imported
-                // import { getProviderKeyboard } from './menus'; // Add this if not already there
+                const { getProviderKeyboard } = await import('./menus');
                 await ctx.reply(t(l, 'select_provider'), { reply_markup: getProviderKeyboard(user.language) });
                 return;
             }
@@ -128,11 +127,15 @@ export async function handleState(ctx: BotContext) {
             }
 
             const number = text;
+            if (!number) {
+                await ctx.reply("Please enter a number.");
+                return;
+            }
 
             // Validator
             // Starts with 09, 959, +959. Followed by digits.
             const phoneRegex = /^(09|959|\+959)\d+$/;
-            if (!phoneRegex.test(number)) {
+            if (text && !phoneRegex.test(text)) {
                 await ctx.reply(t(l, 'error_invalid_phone_format'));
                 return;
             }
@@ -241,8 +244,11 @@ export async function handleState(ctx: BotContext) {
             }
 
             // Show Admin Account
-            if (provider === 'kpay') await ctx.reply(t(l, 'admin_kpay_info'), { parse_mode: 'Markdown' });
-            else await ctx.reply(t(l, 'admin_wave_info'), { parse_mode: 'Markdown' });
+            if (provider === 'kpay') {
+                await ctx.reply(t(l, 'admin_kpay_info'), { parse_mode: 'Markdown' });
+            } else {
+                await ctx.reply(t(l, 'admin_wave_info'), { parse_mode: 'Markdown' });
+            }
 
             // Ask Amount
             user.tempData = { topupProvider: provider };
@@ -339,7 +345,6 @@ export async function handleState(ctx: BotContext) {
                 status: 'pending',
                 // Store proof file_id? We need a field or put in description/metadata?
                 // Schema has 'snapshotBalanceBefore'?
-                // Let's assume we can't store fileId in Schema easily without update.
                 // For now, we just pass fileId to Admin. We don't persist it in DB unless we add field.
                 // "Send the receipt to admin".
             });
@@ -435,7 +440,7 @@ export async function handleState(ctx: BotContext) {
                 await ctx.user.save();
                 return;
             }
-            await processUserSearch(ctx, text);
+            if (text) await processUserSearch(ctx, text);
             return;
         }
 
@@ -564,8 +569,6 @@ export async function handleState(ctx: BotContext) {
             await user.save();
             await ctx.reply(t(l, 'merchant_onboarding_channel'));
             return;
-            await ctx.reply(t(l, 'merchant_onboarding_channel'));
-            return;
         }
 
         // Add Channel Flow
@@ -575,7 +578,7 @@ export async function handleState(ctx: BotContext) {
             let username: string | undefined;
 
             if (ctx.message && 'forward_from_chat' in ctx.message && ctx.message.forward_from_chat) {
-                const fwd = ctx.message.forward_from_chat;
+                const fwd = ctx.message.forward_from_chat as any;
                 if (fwd.type !== 'channel') {
                     await ctx.reply("Please forward from a CHANNEL.");
                     return;
@@ -604,7 +607,11 @@ export async function handleState(ctx: BotContext) {
 
             // Verify Admin
             try {
-                const admins = await ctx.api.getChatAdministrators(channelId!);
+                if (!channelId) {
+                    await ctx.reply("Channel ID is missing. Cannot verify admin status.");
+                    return;
+                }
+                const admins = await ctx.api.getChatAdministrators(channelId);
                 const me = await ctx.api.getMe();
                 const isAdmin = admins.some(a => a.user.id === me.id);
                 if (!isAdmin) {

@@ -15,6 +15,14 @@ initPaymentHandlers();
 // Initialize payment listeners
 initPaymentHandlers();
 
+// Register Subscription Buying Callback
+bot.callbackQuery(/^buy_sub_(.+)$/, async (ctx) => {
+    const { handleBuySubscription } = await import('./subscriptionHandlers');
+    await handleBuySubscription(ctx, ctx.match[1]);
+});
+
+// Global Debug Loggernt listeners
+
 // Error Handling Middleware for answerCallbackQuery
 bot.use(async (ctx, next) => {
     const originalAnswer = ctx.answerCallbackQuery;
@@ -438,7 +446,10 @@ bot.callbackQuery('cancel_plan_add', async (ctx) => {
 
     const { getMerchantMenu } = await import('./menus');
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Cancelled.", { reply_markup: getMerchantMenu(ctx.user.language) });
+    await ctx.reply("Cancelled.", { reply_markup: getMerchantMenu(ctx.user.language) });
+    try {
+        await ctx.deleteMessage(); // Remove the inline menu message
+    } catch (e) { }
 });
 
 bot.callbackQuery('cancel_sub', async (ctx) => {
