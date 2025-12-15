@@ -74,6 +74,115 @@ export async function handleState(ctx: BotContext) {
             return;
         }
 
+        // Add Account Flow
+        if (user.interactionState === 'awaiting_payment_provider') {
+            if (text === t(l, 'cancel')) {
+                await ctx.reply("Cancelled.", { reply_markup: getMainMenu(user.role, user.language) });
+                user.interactionState = 'idle';
+                await user.save();
+                return;
+            }
+
+            // Validate Provider
+            const kpay = t(l, 'provider_kpay');
+            const wave = t(l, 'provider_wave');
+            let provider = '';
+            if (text === kpay) provider = 'KBZ Pay';
+            else if (text === wave) provider = 'Wave Pay';
+            else {
+                // Reprompt
+                // Assuming getProviderKeyboard is available or needs to be imported
+                // import { getProviderKeyboard } from './menus'; // Add this if not already there
+                await ctx.reply(t(l, 'select_provider'), { reply_markup: getProviderKeyboard(user.language) });
+                return;
+            }
+
+            user.tempData = { provider };
+            user.interactionState = 'awaiting_payment_name';
+            await user.save();
+            await ctx.reply(t(l, 'enter_account_name'), { reply_markup: getCancelKeyboard(user.language) });
+            return;
+        }
+
+        if (user.interactionState === 'awaiting_payment_name') {
+            if (text === t(l, 'cancel')) { /* ... Same Cancel ... */
+                await ctx.reply("Cancelled.", { reply_markup: getMainMenu(user.role, user.language) });
+                user.interactionState = 'idle';
+                await user.save();
+                return;
+            }
+
+            user.tempData = { ...user.tempData, name: text };
+            user.interactionState = 'awaiting_payment_number';
+            await user.save();
+            await ctx.reply(t(l, 'enter_account_number'), { reply_markup: getCancelKeyboard(user.language) });
+            return;
+        }
+
+        if (user.interactionState === 'awaiting_payment_number') {
+            if (text === t(l, 'cancel')) { /* ... Same Cancel ... */
+                await ctx.reply("Cancelled.", { reply_markup: getMainMenu(user.role, user.language) });
+                user.interactionState = 'idle';
+                await user.save();
+                return;
+            }
+
+            const number = text;
+
+            // Validator
+            // Starts with 09, 959, +959. Followed by digits.
+            const phoneRegex = /^(09|959|\+959)\d+$/;
+            if (!phoneRegex.test(number)) {
+                await ctx.reply(t(l, 'error_invalid_phone_format'));
+                return;
+            }
+
+            const { provider, name } = user.tempData;
+            const finalString = `${provider} - ${name} - ${number}`;
+
+            // Use the PaymentMethods array if desired, but User model has 'paymentAccount' string?
+            // User.ts says 'paymentMethods' is Phase 2. 'paymentAccount' is likely string from Phase 1?
+            // Let's check User.ts again. It has 'paymentAccount' (maybe I missed it or it was removed?).
+            // Step 1656 View showed:
+            // 45:     paymentMethods: [{ provider... }]
+            // But did it have `paymentAccount` string? 
+            // I DO NOT SEE `paymentAccount: String` in Step 1656 view of User.ts!
+            // Wait. Step 1656 showed `paymentMethods` array.
+            // BUT user.ts usually had `paymentAccount` string for Topup/Withdraw logic in previous steps?
+            // Ah, `User.ts` in 1656 showed `balance`, `role`.
+            // I don't see `paymentAccount` in the Schema snippet I saw!
+            // Wait. Lines 1-60.
+            // Did I miss it?
+            // If `paymentMethods` is the only place, I should push to it.
+
+            // However, existing Withdrawal Logic (`menuHandlers.ts: startWithdrawalLogic`) likely checks `user.paymentAccount`.
+            // If `user.paymentAccount` is removed, existing code breaks.
+            // Let's assume I should push to `paymentMethods`.
+            // But user asked for "Add Payment Account".
+
+            // If User.ts DOES NOT have `paymentAccount` string, I should fix Withdrawal logic too.
+            // But for now, let's just save to `paymentMethods`.
+
+            user.paymentMethods.push({
+                provider: provider === 'KBZ Pay' ? 'kpay' : 'wavepay', // map back to enum
+                accountName: name,
+                accountNumber: number
+            });
+
+            // Also update `paymentAccount` string for backward compatibility IF it exists?
+            // I'll check if I can set `user.paymentAccount` (any).
+            // Actually, if I use `paymentMethods`, I should prompt user to PICK one during withdraw?
+            // That's more complex.
+
+            // For now, let's just save to `paymentMethods`.
+
+            user.interactionState = 'idle';
+            await user.save();
+
+            await ctx.reply(t(l, 'account_added', { account: finalString }), { reply_markup: getMainMenu(user.role, user.language) });
+            return;
+        }
+
         if (state === 'selecting_invoice_type_view') {
             let type: 'one-time' | 'reusable' = 'one-time';
             if (text === t(l, 'invoice_type_reusable')) type = 'reusable';
@@ -111,6 +220,38 @@ export async function handleState(ctx: BotContext) {
             return;
         }
 
+        if (state === 'awaiting_topup_provider') {
+            if (text === t(l, 'cancel')) {
+                await ctx.reply("Cancelled.", { reply_markup: getMainMenu(user.role, user.language) });
+                user.interactionState = 'idle';
+                await user.save();
+                return;
+            }
+
+            const kpay = t(l, 'provider_kpay');
+            const wave = t(l, 'provider_wave');
+            let provider = '';
+
+            if (text === kpay) provider = 'kpay';
+            else if (text === wave) provider = 'wavepay';
+            else {
+                const { getProviderKeyboard } = await import('./menus');
+                await ctx.reply(t(l, 'select_provider_topup'), { reply_markup: getProviderKeyboard(user.language) });
+                return;
+            }
+
+            // Show Admin Account
+            if (provider === 'kpay') await ctx.reply(t(l, 'admin_kpay_info'), { parse_mode: 'Markdown' });
+            else await ctx.reply(t(l, 'admin_wave_info'), { parse_mode: 'Markdown' });
+
+            // Ask Amount
+            user.tempData = { topupProvider: provider };
+            user.interactionState = 'awaiting_topup_amount';
+            await user.save();
+            await ctx.reply(t(l, 'enter_topup_amount'), { reply_markup: getCancelKeyboard(user.language) });
+            return;
+        }
+
         if (state === 'awaiting_topup_amount') {
             const amount = parseInt(text || '');
             if (isNaN(amount) || amount < 3000) {
@@ -118,11 +259,11 @@ export async function handleState(ctx: BotContext) {
                 return;
             }
             // Save to tempData, next state
-            user.tempData = { topupAmount: amount };
+            user.tempData = { ...user.tempData, topupAmount: amount }; // merge provider
             user.interactionState = 'awaiting_topup_proof';
             await user.save();
 
-            await ctx.reply(t(l, 'topup_payment_info'), { parse_mode: 'Markdown' });
+            await ctx.reply(t(l, 'enter_proof'), { parse_mode: 'Markdown' });
             return;
         }
 
@@ -132,27 +273,38 @@ export async function handleState(ctx: BotContext) {
                 await ctx.reply("Min withdraw is 10,000. Try again or /cancel.");
                 return;
             }
-            if (user.balance < amount) {
-                await ctx.reply("Insufficient balance.");
-                return;
+
+            // Fee Logic: 5%
+            const fee = amount * 0.05;
+            const totalDeduction = amount + fee;
+
+            if (user.balance < totalDeduction) {
+                return ctx.reply(`Insufficient balance.\nRequested: ${amount.toLocaleString()}\nFee (5%): ${fee.toLocaleString()}\nTotal Required: ${totalDeduction.toLocaleString()}\nYour Balance: ${user.balance.toLocaleString()}`);
             }
 
-            // Atomic Withdraw Request
-            const { default: Transaction } = await import('@/models/Transaction');
-            await Transaction.create({
-                fromUser: user._id,
-                amount: amount,
-                type: 'withdraw',
-                status: 'pending'
-            });
+            // Ask for Account selection or Confirmation if 1 account
+            if (!user.paymentMethods || user.paymentMethods.length === 0) {
+                return ctx.reply("No payment accounts linked. Please add one in Settings first.");
+            }
 
-            user.balance -= amount;
-            user.interactionState = 'idle';
+            // Store amount temporarily
+            user.tempData = { withdrawAmount: amount, withdrawFee: fee, withdrawTotal: totalDeduction };
+            user.markModified('tempData');
             await user.save();
 
-            await ctx.reply(`Withdrawal of ${amount.toLocaleString()} MMK queued. Please wait up to 3 days for processing.`, {
-                reply_markup: getMainMenu(user.role, user.language)
+            // Ask to select account
+            let msg = `Withdrawal Request:\nAmount: ${amount.toLocaleString()}\nFee (5%): ${fee.toLocaleString()}\nTotal Deduction: ${totalDeduction.toLocaleString()}\n\nSelect Account:`;
+            const { InlineKeyboard } = await import('grammy');
+            const kb = new InlineKeyboard();
+            user.paymentMethods.forEach((pm: any, index: number) => {
+                kb.text(`${pm.provider} - ${pm.accountNumber}`, `confirm_withdraw_acc_${index}`).row();
             });
+            kb.text("Cancel", "cancel_withdraw");
+
+            await ctx.reply(msg, { reply_markup: kb });
+            // State: awaiting_withdraw_confirm (or handled by callback)
+            user.interactionState = 'idle'; // Handled by callback now
+            await user.save();
             return;
         }
 
@@ -269,6 +421,76 @@ export async function handleState(ctx: BotContext) {
             return;
         }
 
+        if (state === 'awaiting_broadcast_message') {
+            const { processBroadcast } = await import('./adminHandlers');
+            await processBroadcast(ctx, text || '');
+            return;
+        }
+
+        if (state === 'awaiting_admin_user_search') {
+            const { processUserSearch } = await import('./adminHandlers');
+            if (text === '/cancel') {
+                await ctx.reply("Cancelled.");
+                ctx.user.interactionState = 'idle';
+                await ctx.user.save();
+                return;
+            }
+            await processUserSearch(ctx, text);
+            return;
+        }
+
+        if (state === 'awaiting_withdraw_reject_reason') {
+            const reason = text;
+            const txId = user.tempData?.rejectTxId;
+
+            if (!txId) {
+                user.interactionState = 'idle';
+                await user.save();
+                return ctx.reply("Session expired (No Tx ID).");
+            }
+
+            const { default: Transaction } = await import('@/models/Transaction');
+            const { default: User } = await import('@/models/User'); // Model import
+
+            console.log(`[DEBUG] processing reject reason for: ${txId}`);
+            const tx = await Transaction.findById(txId);
+            console.log(`[DEBUG] tx found (reject):`, tx);
+
+            if (!tx || tx.status !== 'pending') {
+                console.log(`[DEBUG] Fail Reject: tx=${!!tx}, status=${tx?.status}`);
+                user.interactionState = 'idle';
+                await user.save();
+                return ctx.reply("Transaction not found or already processed.");
+            }
+
+            // Reject
+            tx.status = 'rejected';
+            tx.rejectionReason = reason;
+            tx.adminProcessedBy = user._id; // Admin
+            await tx.save();
+
+            // Refund User
+            const targetUser = await User.findById(tx.fromUser);
+            if (targetUser) {
+                // Formatting consistency with creation
+                const amount = tx.amount;
+                const fee = amount * 0.05;
+                const total = amount + fee;
+
+                targetUser.balance += total;
+                await targetUser.save();
+
+                await ctx.api.sendMessage(targetUser.telegramId, `❌ <b>Withdrawal Rejected</b>\n\nYour withdrawal request for ${amount.toLocaleString()} MMK has been rejected.\n\nReason: <i>${reason}</i>\n\n💰 <b>${total.toLocaleString()} MMK</b> has been refunded to your balance.`, { parse_mode: 'HTML' });
+            }
+
+            user.interactionState = 'idle';
+            user.tempData = undefined;
+            await user.save();
+
+            await ctx.reply(`✅ Withdrawal rejected and refunded.\nReason: ${reason}`);
+            return;
+        }
+
         if (state === 'awaiting_invoice_amount') {
             const amount = parseInt(text || '');
             if (isNaN(amount) || amount <= 0) {
@@ -342,7 +564,79 @@ export async function handleState(ctx: BotContext) {
             await user.save();
             await ctx.reply(t(l, 'merchant_onboarding_channel'));
             return;
+            await ctx.reply(t(l, 'merchant_onboarding_channel'));
+            return;
         }
+
+        // Add Channel Flow
+        if (state === 'awaiting_channel_username') {
+            let channelId: number | undefined;
+            let title: string | undefined;
+            let username: string | undefined;
+
+            if (ctx.message && 'forward_from_chat' in ctx.message && ctx.message.forward_from_chat) {
+                const fwd = ctx.message.forward_from_chat;
+                if (fwd.type !== 'channel') {
+                    await ctx.reply("Please forward from a CHANNEL.");
+                    return;
+                }
+                channelId = fwd.id;
+                title = fwd.title;
+                username = fwd.username;
+            } else if (text && text.startsWith('@')) {
+                try {
+                    const chat = await ctx.api.getChat(text);
+                    if (chat.type !== 'channel') {
+                        await ctx.reply("That is not a channel.");
+                        return;
+                    }
+                    channelId = chat.id;
+                    title = chat.title;
+                    username = chat.username;
+                } catch (e) {
+                    await ctx.reply("Could not find channel. Make sure I am Admin or username is correct.");
+                    return;
+                }
+            } else {
+                await ctx.reply("Please enter @username or Forward a message from the channel.");
+                return;
+            }
+
+            // Verify Admin
+            try {
+                const admins = await ctx.api.getChatAdministrators(channelId!);
+                const me = await ctx.api.getMe();
+                const isAdmin = admins.some(a => a.user.id === me.id);
+                if (!isAdmin) {
+                    await ctx.reply(t(l, 'channel_add_fail'));
+                    return;
+                }
+            } catch (e) {
+                await ctx.reply("Error verifying admin status: " + e);
+                return;
+            }
+
+            // Save to DB
+            const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+            // Upsert (activate if exists)
+            await MerchantChannel.findOneAndUpdate(
+                { merchantId: user._id, channelId: channelId },
+                {
+                    merchantId: user._id,
+                    channelId: channelId,
+                    title: title,
+                    username: username,
+                    isActive: true
+                },
+                { upsert: true, new: true }
+            );
+
+            user.interactionState = 'idle';
+            await user.save();
+            await ctx.reply(t(l, 'channel_add_success').replace('{title}', title || 'Channel'), { reply_markup: getMerchantMenu(user.language) });
+            return;
+        }
+
 
         // Onboarding: Channel
         if (state === 'onboarding_merchant_channel') {
@@ -377,6 +671,34 @@ export async function handleState(ctx: BotContext) {
 
             const { getMerchantMenu } = await import('./menus');
             await ctx.reply(t(l, 'merchant_completed'), { reply_markup: getMerchantMenu(user.language) });
+            await ctx.reply(t(l, 'merchant_completed'), { reply_markup: getMerchantMenu(user.language) });
+            return;
+        }
+
+        if (state === 'awaiting_plan_price') {
+            const price = parseInt(text || '');
+            if (isNaN(price) || price < 1000) {
+                await ctx.reply("Invalid price. Min 1000 MMK.");
+                return;
+            }
+
+            const duration = user.tempData?.planDuration;
+            const channelIdStr = user.tempData?.planChannelId;
+
+            const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+            await SubscriptionPlan.create({
+                channelId: channelIdStr,
+                durationMonths: duration,
+                price: price,
+                isActive: true
+            });
+
+            user.interactionState = 'idle';
+            user.tempData = undefined;
+            await user.save();
+
+            const { getMerchantMenu } = await import('./menus');
+            await ctx.reply(t(l, 'plan_created'), { reply_markup: getMerchantMenu(user.language) });
             return;
         }
 

@@ -87,6 +87,19 @@ export async function authMiddleware(ctx: BotContext, next: NextFunction) {
             return next();
         }
 
+        // Handle Inline Query block
+        if (ctx.inlineQuery) {
+            console.log('[Middleware] Blocking Inline Query due to ToS');
+            await ctx.answerInlineQuery([{
+                type: 'article',
+                id: 'tos_block',
+                title: '⛔ Accept Terms First',
+                description: 'Please go to private chat and type /start to accept Terms.',
+                input_message_content: { message_text: 'Please accept Terms of Service in private chat.' }
+            }], { cache_time: 0, is_personal: true });
+            return;
+        }
+
         // Otherwise block and warn
         const msg = t(user.language as any, 'tos_rejected');
         if (ctx.callbackQuery) {

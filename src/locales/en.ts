@@ -18,11 +18,26 @@ export const en = {
     error_generic: "An error occurred.",
 
     // Menus
-    menu_balance: "💰 Balance",
+    menu_balance: "💰 Balance", // Legacy?
     menu_topup: "➕ Top up",
     menu_history: "📜 History",
     menu_settings: "⚙️ Settings",
     menu_merchant: "🏪 Merchant Area",
+
+    // New Standard Keys
+    balance_btn: "💰 Balance",
+    topup_btn: "➕ Top up",
+    history_btn: "📜 History",
+    settings_btn: "⚙️ Settings",
+    channel_plans_btn: "📺 Channel Plans",
+    my_subs_btn: "📂 My Subscriptions",
+
+    // Logic Msgs
+    no_subs: "You have no active subscriptions.",
+    no_more_results: "No more results.",
+    sub_history_title: "📂 My Subscriptions",
+    sub_active: "Active",
+    sub_expired: "Expired",
 
     // Balance
     balance_text: "Your Balance: ${amount} MMK.",
@@ -30,16 +45,27 @@ export const en = {
 
     // Topup
     topup_intro: "Top Up Rules:\nMinimum: 3,000 MMK.\n\nType /cancel to stop.",
-    topup_payment_info: "🏦 **Payment Account**:\nKPay: 0912345678 (Mr. Admin)\nWave: 0912345678\n\nPlease transfer amount and upload screenshot.",
-    enter_topup_amount: "Please enter amount (MMK):",
+    // topup_payment_info: DEPRECATED or used as fallback
+    admin_kpay_info: "🏦 **Admin KBZ Pay**\nName: Mr. Admin\nAccount: 0912345678\n\nPlease transfer to this account.",
+    admin_wave_info: "money_with_wings **Admin Wave Pay**\nName: Mr. Admin\nAccount: 0912345678\n\nPlease transfer to this account.",
+    enter_topup_amount: "Please enter transferred amount (MMK):",
     enter_proof: "Please upload the payment receipt (Photo).",
     topup_submitted: "✅ Receipt received! Admin is verifying...",
     topup_rejected_reason: "❌ Topup Rejected.\nReason: {reason}",
     admin_reject_reason_prompt: "Please enter rejection reason:",
     cancel: "❌ Cancel",
+    select_provider_topup: "Select Payment Method for Top Up:",
 
     // Settings
     settings_add_account: "➕ Add Payment Account",
+    settings_remove_account: "🗑 Remove Account",
+    select_provider: "Select Payment Provider:",
+    provider_kpay: "KBZ Pay",
+    provider_wave: "Wave Pay",
+    enter_account_name: "Enter Account Name (e.g. U Mya):",
+    enter_account_number: "Enter Account Number (e.g. 0912345678):",
+    account_added: "✅ Payment Account Saved:\n{account}",
+    error_invalid_phone_format: "Invalid format. Number must start with 09, 959, or +959 and contain only digits.",
 
     // Merchant
     // Merchant
@@ -62,5 +88,27 @@ export const en = {
     invoice_type_onetime: "1️⃣ One Time",
     invoice_type_reusable: "🔁 Reusable",
     select_invoice_type: "Select Invoice Type:",
-    enter_invoice_amount: "Enter Invoice Amount (MMK):"
+    enter_invoice_amount: "Enter Invoice Amount (MMK):",
+
+    // Channels
+    merchant_menu_channels: "📢 Manage Channels",
+    channel_list_empty: "You have no connected channels.",
+    channel_add_btn: "➕ Add Channel",
+    channel_add_prompt: "To add a channel:\n1. Add this bot to your channel as Administrator.\n2. Then, enter the Channel Username (e.g. @mychannel) or Forward a message from it.",
+    channel_add_success: "✅ Channel '{title}' added!",
+    channel_add_fail: "❌ Could not verify channel. Make sure I am Admin.",
+
+    // Plans
+    plan_menu_title: "Plans for {channel}:",
+    plan_add_btn: "➕ Add Plan",
+    plan_duration_prompt: "Select plan duration:",
+    plan_price_prompt: "Enter price in MMK (e.g. 5000):",
+    plan_created: "✅ Plan created!",
+
+    // Subscription User Flow
+    sub_intro: "📢 **{channel}**\n\nChoose a subscription plan:",
+    sub_plan_btn: "{duration} Months - {price} MMK",
+    sub_confirm: "Confirm subscription for {price} MMK?",
+    sub_success: "✅ Subscription Active!\n\nHere is your ONE-TIME invite link:\n{link}\n\n(Link expires in 24h, please join immediately!)",
+    sub_fail_balance: "Insufficient Balance. Please Top Up."
 };

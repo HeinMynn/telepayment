@@ -12,7 +12,7 @@ export function t(lang: Language, key: TranslationKey, params?: Record<string, s
 
     if (params) {
         Object.entries(params).forEach(([k, v]) => {
-            text = text.replace(`\${${k}}`, String(v));
+            text = text.replace(new RegExp(`{${k}}`, 'g'), String(v));
         });
     }
     return text;

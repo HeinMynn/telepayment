@@ -12,7 +12,7 @@ export interface ITransaction extends Document {
 
     // Phase 2
     invoiceId?: mongoose.Types.ObjectId;
-    type: 'payment' | 'topup' | 'withdraw';
+    type: 'payment' | 'topup' | 'withdraw' | 'subscription';
     proofImageId?: string;
     rejectionReason?: string;
     adminProcessedBy?: mongoose.Types.ObjectId;
@@ -28,7 +28,7 @@ const TransactionSchema = new Schema({
 
     // Phase 2
     invoiceId: { type: Schema.Types.ObjectId, ref: 'Invoice' },
-    type: { type: String, enum: ['payment', 'topup', 'withdraw'], default: 'payment' },
+    type: { type: String, enum: ['payment', 'topup', 'withdraw', 'subscription'], default: 'payment' },
     proofImageId: { type: String },
     rejectionReason: { type: String },
     adminProcessedBy: { type: Schema.Types.ObjectId, ref: 'User' }

@@ -13,7 +13,14 @@ export async function POST(req: Request) {
         await dbConnect();
 
         const body = await req.json();
-        console.log('Webhook Body:', JSON.stringify(body));
+        console.log('Webhook Body Type:', typeof body);
+        if (body && typeof body === 'object') {
+            const updateId = body.update_id;
+            const keys = Object.keys(body);
+            console.log(`Webhook Rx: UpdateID=${updateId} Keys=${keys.join(',')}`);
+        } else {
+            console.log('Webhook Body Empty/Invalid');
+        }
 
         // Initialize the bot (fetches info from Telegram if not cached)
         await bot.init();
