@@ -153,3 +153,65 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
         await ctx.reply("Subscription active, but failed to generate link. Please contact admin.");
     }
 }
+
+export async function handleManageChannels(ctx: BotContext) {
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { t } = await import('@/lib/i18n');
+    const l = ctx.user.language as any;
+    const { InlineKeyboard } = await import('grammy');
+
+    const channels = await MerchantChannel.find({ merchantId: ctx.user._id, isActive: true });
+
+    if (channels.length === 0) {
+        const kb = new InlineKeyboard().text(t(l, 'channel_add_btn'), 'add_channel');
+        await ctx.reply(t(l, 'channel_list_empty'), { reply_markup: kb });
+        return;
+    }
+
+    let msg = `<b>📢 Your Channels</b>\nSelect a channel to manage plans:\n`;
+    const kb = new InlineKeyboard();
+
+    for (const ch of channels) {
+        const planCount = await SubscriptionPlan.countDocuments({ channelId: ch._id, isActive: true });
+        msg += `\n• <b>${ch.title}</b> (${planCount} Plans)`;
+        kb.text(ch.title, `manage_ch_${ch._id}`).row();
+    }
+
+    kb.text(t(l, 'channel_add_btn'), 'add_channel').row();
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+}
+
+export async function handleChannelDetails(ctx: BotContext, channelId: string) {
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { t } = await import('@/lib/i18n');
+    const l = ctx.user.language as any;
+    const { InlineKeyboard } = await import('grammy');
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.reply("Channel not found.");
+
+    const plans = await SubscriptionPlan.find({ channelId: ch._id, isActive: true });
+
+    let msg = `📢 <b>${ch.title}</b>\n\n`;
+    const botUsername = ctx.me.username;
+
+    if (plans.length > 0) {
+        msg += `<b>Active Plans:</b>\n`;
+        plans.forEach((p, i) => {
+            const link = `https://t.me/${botUsername}?start=sub_${p._id}`;
+            msg += `\n${i + 1}. <b>${p.name || (p.durationMonths + ' Months')}</b> - ${p.price.toLocaleString()} MMK\n`;
+            msg += `🔗 Link: <code>${link}</code>\n`;
+        });
+    } else {
+        msg += `No plans created yet.`;
+    }
+
+    const kb = new InlineKeyboard()
+        .text(t(l, 'plan_add_btn'), `add_plan_${ch._id}`).row()
+        .text("🔙 Back", `admin_channels_back`); // or merchant_manage_channels implicitly
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+}

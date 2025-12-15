@@ -128,6 +128,12 @@ export async function handleMenuClick(ctx: BotContext) {
         return;
     }
 
+    // 8. Merchant -> Manage Channels
+    if (text === t(l, 'merchant_menu_channels')) {
+        const { handleManageChannels } = await import('./subscriptionHandlers');
+        return handleManageChannels(ctx);
+    }
+
     // 7. Merchant -> Edit Name
     if (text === t(l, 'settings_add_account')) {
         const { getProviderKeyboard } = await import('./menus');

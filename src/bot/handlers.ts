@@ -74,7 +74,7 @@ bot.callbackQuery('accept_tos', async (ctx) => {
 // Handle Renew (Callback)
 bot.on('callback_query:data', async (ctx, next) => {
     if (ctx.callbackQuery.data.startsWith('renew_sub_')) {
-        const { handleSubscriptionStart } = await import('./subscription');
+        const { handleSubscriptionStart } = await import('./subscriptionHandlers');
         // adapt renew_sub_ID -> sub_ID
         const payload = ctx.callbackQuery.data.replace('renew_', '');
         return handleSubscriptionStart(ctx, payload);
@@ -105,7 +105,7 @@ bot.callbackQuery('accept_tos', async (ctx) => {
         await ctx.editMessageText(t(user.language as any, 'welcome') + "\n\n✅ Terms Accepted.");
 
         if (payload.startsWith('sub_')) {
-            const { handleSubscriptionStart } = await import('./subscription');
+            const { handleSubscriptionStart } = await import('./subscriptionHandlers');
             return handleSubscriptionStart(ctx, payload);
         } else {
             const { handlePaymentStart } = await import('./payment');
@@ -228,20 +228,27 @@ bot.callbackQuery('add_channel_start', async (ctx) => {
     await ctx.reply(t(user.language as any, 'channel_add_prompt'), { reply_markup: getCancelKeyboard(user.language) });
 });
 
-bot.callbackQuery(/^manage_channel_(.+)$/, async (ctx) => {
+bot.callbackQuery(/^manage_ch_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
-    // Show Plan Management Menu
-    // We need to implement this in `subscription.ts` or here?
-    const { handleManageChannel } = await import('./subscription');
+    const { handleChannelDetails } = await import('./subscriptionHandlers');
     await ctx.answerCallbackQuery();
-    await handleManageChannel(ctx, channelId);
+    await handleChannelDetails(ctx, channelId);
 });
 
 bot.callbackQuery(/^add_plan_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
-    const { handleAddPlan } = await import('./subscription');
+    const { t } = await import('@/lib/i18n');
+    const { InlineKeyboard } = await import('grammy');
+
+    // Ask Duration first
+    const kb = new InlineKeyboard()
+        .text("1 Month", `plan_dur_1_${channelId}`).row()
+        .text("3 Months", `plan_dur_3_${channelId}`).row()
+        .text("6 Months", `plan_dur_6_${channelId}`).row()
+        .text("1 Year", `plan_dur_12_${channelId}`);
+
     await ctx.answerCallbackQuery();
-    await handleAddPlan(ctx, channelId);
+    await ctx.reply(t(ctx.user.language as any, 'plan_duration_prompt'), { reply_markup: kb });
 });
 
 bot.callbackQuery(/^plan_dur_(\d+)_(.+)$/, async (ctx) => {
@@ -263,9 +270,26 @@ bot.callbackQuery(/^plan_dur_(\d+)_(.+)$/, async (ctx) => {
 
 bot.callbackQuery(/^buy_plan_(.+)$/, async (ctx) => {
     const planId = ctx.match[1];
-    const { handleBuyPlan } = await import('./subscription');
+    const { handleBuySubscription } = await import('./subscriptionHandlers');
     await ctx.answerCallbackQuery();
-    await handleBuyPlan(ctx, planId);
+    await handleBuySubscription(ctx, planId);
+});
+
+bot.callbackQuery('add_channel', async (ctx) => {
+    const { t } = await import('@/lib/i18n');
+    const { getCancelKeyboard } = await import('./menus');
+
+    ctx.user.interactionState = 'awaiting_channel_username';
+    await ctx.user.save();
+    await ctx.answerCallbackQuery();
+    await ctx.reply(t(ctx.user.language as any, 'channel_add_prompt'), { reply_markup: getCancelKeyboard(ctx.user.language) });
+});
+
+bot.callbackQuery('admin_channels_back', async (ctx) => {
+    const { handleManageChannels } = await import('./subscriptionHandlers');
+    await ctx.answerCallbackQuery();
+    try { await ctx.deleteMessage(); } catch (e) { }
+    await handleManageChannels(ctx);
 });
 
 // Confirm Withdraw Logic
