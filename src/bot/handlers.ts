@@ -377,6 +377,14 @@ bot.command('audit', async (ctx) => {
 
 
 
+// Pagination for Manage Channels
+bot.callbackQuery(/^channels_page_(\d+)$/, async (ctx) => {
+    const page = parseInt(ctx.match[1]);
+    const { handleManageChannels } = await import('./subscriptionHandlers');
+    await ctx.answerCallbackQuery();
+    await handleManageChannels(ctx, page);
+});
+
 // Channel Management Callbacks
 bot.callbackQuery('add_channel_start', async (ctx) => {
     const user = ctx.user;

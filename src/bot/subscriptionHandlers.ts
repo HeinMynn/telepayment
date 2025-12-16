@@ -191,49 +191,83 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
     }
 }
 
-export async function handleManageChannels(ctx: BotContext) {
-    const { t } = await import('@/lib/i18n');
-    const loadingMsg = await ctx.reply("⏳ Loading Channels...");
-
+export async function handleManageChannels(ctx: BotContext, page: number = 1) {
     const { default: MerchantChannel } = await import('@/models/MerchantChannel');
     const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-
-    const l = ctx.user.language as any;
     const { InlineKeyboard } = await import('grammy');
+    const { getPaginationKeyboard } = await import('./menus');
+    const { t } = await import('@/lib/i18n'); // Ensure t is imported
 
-    const channels = await MerchantChannel.find({ merchantId: ctx.user._id, isActive: true });
+    const user = ctx.user;
+    const l = user.language as any;
+    const loadingMsg = await ctx.reply("⏳ Loading Channels...");
 
-    if (channels.length === 0) {
-        const kb = new InlineKeyboard().text(t(l, 'channel_add_btn'), 'add_channel');
-        await ctx.api.editMessageText(ctx.chat?.id!, loadingMsg.message_id, t(l, 'channel_list_empty'), { reply_markup: kb });
-        return;
+    try {
+        const PAGE_SIZE = 5;
+        const skip = (page - 1) * PAGE_SIZE;
+
+        const totalCount = await MerchantChannel.countDocuments({ merchantId: user._id, isActive: true });
+        const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+
+        if (totalCount === 0) {
+            const kb = new InlineKeyboard().text(t(l, 'channel_add_btn'), 'add_channel_start');
+            await ctx.api.editMessageText(ctx.chat?.id!, loadingMsg.message_id, t(l, 'channel_list_empty'), { reply_markup: kb });
+            return;
+        }
+
+        // Optimized: Single Query Aggregation
+        // Fetches Channels + Plan Counts in one go.
+        const channels = await MerchantChannel.aggregate([
+            { $match: { merchantId: user._id, isActive: true } },
+            { $skip: skip },
+            { $limit: PAGE_SIZE },
+            {
+                $lookup: {
+                    from: 'subscriptionplans', // Mongoose default collection name
+                    let: { chId: '$_id' },
+                    pipeline: [
+                        { $match: { $expr: { $and: [{ $eq: ['$channelId', '$$chId'] }, { $eq: ['$isActive', true] }] } } },
+                        { $count: 'count' }
+                    ],
+                    as: 'planStats'
+                }
+            },
+            {
+                $addFields: {
+                    planCount: { $ifNull: [{ $arrayElemAt: ['$planStats.count', 0] }, 0] }
+                }
+            }
+        ]);
+
+        let msg = `<b>📢 Your Channels (Page ${page}/${totalPages})</b>\nSelect a channel to manage plans:\n`;
+
+        // Dynamic Keyboard construction
+        const kb = new InlineKeyboard();
+        for (const ch of channels) {
+            msg += `\n• <b>${ch.title}</b> (${ch.planCount} Plans)`;
+            kb.text(ch.title, `manage_ch_${ch._id}`).row();
+        }
+
+        // Add Pagination Controls
+        const paginationRow = getPaginationKeyboard(page, totalPages, 'channels');
+        // Grammy's inline_keyboard is [][]InlineKeyboardButton
+        if (paginationRow.inline_keyboard.length > 0) {
+            const buttons = paginationRow.inline_keyboard[0]; // get the first row of buttons
+            kb.row();
+            // Append manually or use spread if API supports it, but .append takes ...buttons
+            buttons.forEach(btn => kb.text(btn.text, (btn as any).callback_data || 'noop'));
+        }
+
+        kb.text(t(l, 'channel_add_btn'), 'add_channel_start').row();
+
+        // If updated from callback (pagination), edit. If new, reply.
+        // Since we sent a loading message, we always edit strictly speaking.
+        await ctx.api.editMessageText(ctx.chat?.id!, loadingMsg.message_id, msg, { parse_mode: 'HTML', reply_markup: kb });
+
+    } catch (error) {
+        console.error("Manage Channels Error:", error);
+        await ctx.api.editMessageText(ctx.chat?.id!, loadingMsg.message_id, "❌ Error loading channels.");
     }
-
-    // Optimization: Aggregation instead of Loop
-    const channelIds = channels.map(c => c._id);
-    const planCounts = await SubscriptionPlan.aggregate([
-        { $match: { channelId: { $in: channelIds }, isActive: true } },
-        { $group: { _id: '$channelId', count: { $sum: 1 } } }
-    ]);
-
-    // Map counts for easy lookup
-    const countMap: Record<string, number> = {};
-    planCounts.forEach((pc: any) => {
-        countMap[String(pc._id)] = pc.count;
-    });
-
-    let msg = `<b>📢 Your Channels</b>\nSelect a channel to manage plans:\n`;
-    const kb = new InlineKeyboard();
-
-    for (const ch of channels) {
-        const count = countMap[String(ch._id)] || 0;
-        msg += `\n• <b>${ch.title}</b> (${count} Plans)`;
-        kb.text(ch.title, `manage_ch_${ch._id}`).row();
-    }
-
-    kb.text(t(l, 'channel_add_btn'), 'add_channel').row();
-
-    await ctx.api.editMessageText(ctx.chat?.id!, loadingMsg.message_id, msg, { parse_mode: 'HTML', reply_markup: kb });
 }
 
 export async function handleChannelDetails(ctx: BotContext, channelId: string) {
