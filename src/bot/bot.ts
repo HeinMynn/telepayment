@@ -9,13 +9,7 @@ if (!token) {
     throw new Error('TELEGRAM_BOT_TOKEN is not defined');
 }
 
-let botConfig: any = {
-    client: {
-        // Optimization for Vercel: We don't need webhook reply for everything, 
-        // but this allows 'sendChatAction' to work if needed without hanging.
-        canUseWebhookReply: (method: string) => method === "sendChatAction",
-    }
-};
+let botConfig: any = {};
 
 // Optimization: Hardcode Bot Info to skip init()
 if (process.env.TELEGRAM_BOT_USERNAME) {

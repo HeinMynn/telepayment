@@ -251,8 +251,10 @@ export async function startTopupflow(ctx: BotContext) {
     const l = user.language as any;
     const { getProviderKeyboard } = await import('./menus'); // Import local helper
 
-    await ctx.reply(t(l, 'topup_intro'));
-    await ctx.reply(t(l, 'select_provider_topup'), { reply_markup: getProviderKeyboard(user.language) });
+    // Optimization: Combine into one message for Vercel reliability
+    await ctx.reply(`${t(l, 'topup_intro')}\n\n${t(l, 'select_provider_topup')}`, {
+        reply_markup: getProviderKeyboard(user.language)
+    });
 
     // Set State
     user.interactionState = 'awaiting_topup_provider';
