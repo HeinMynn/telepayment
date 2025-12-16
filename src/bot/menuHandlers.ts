@@ -1,3 +1,4 @@
+import path from 'path';
 import { BotContext } from './types';
 import { t } from '@/lib/i18n';
 import { getMainMenu, getMerchantMenu, getInvoiceMenu, getInvoiceTypeMenu, getCancelKeyboard } from './menus';
@@ -381,7 +382,7 @@ export async function sendVisualOnboarding(ctx: BotContext) {
     // Step 1: Send Image 1 with 'Next' button
     const kb = new InlineKeyboard().text("Next ➡️", "onboard_2");
 
-    await ctx.replyWithPhoto(new InputFile('assets/guide_1.png'), {
+    await ctx.replyWithPhoto(new InputFile(path.join(process.cwd(), 'assets/guide_1.png')), {
         caption: t(l, 'onboard_cap_1'),
         parse_mode: 'Markdown',
         reply_markup: kb
@@ -398,15 +399,15 @@ export async function handleOnboardingCallback(ctx: BotContext, step: string) {
     let kb = new InlineKeyboard();
 
     if (step === '1') {
-        mediaPath = 'assets/guide_1.png';
+        mediaPath = path.join(process.cwd(), 'assets/guide_1.png');
         caption = t(l, 'onboard_cap_1');
         kb.text("Next ➡️", "onboard_2");
     } else if (step === '2') {
-        mediaPath = 'assets/guide_2.png';
+        mediaPath = path.join(process.cwd(), 'assets/guide_2.png');
         caption = t(l, 'onboard_cap_2');
         kb.text("⬅️ Prev", "onboard_1").text("Next ➡️", "onboard_3");
     } else if (step === '3') {
-        mediaPath = 'assets/guide_3.png';
+        mediaPath = path.join(process.cwd(), 'assets/guide_3.png');
         caption = t(l, 'onboard_cap_3');
         kb.text("⬅️ Prev", "onboard_2").text("Done ✅", "onboard_done");
     } else if (step === 'done') {
