@@ -34,4 +34,11 @@ const TransactionSchema = new Schema({
     adminProcessedBy: { type: Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 
+// Indexes for Performance
+TransactionSchema.index({ type: 1, createdAt: -1 }); // Leaderboard & General History
+TransactionSchema.index({ fromUser: 1, createdAt: -1 }); // User History
+TransactionSchema.index({ toUser: 1, createdAt: -1 }); // Income/Received History
+TransactionSchema.index({ invoiceId: 1 }); // Invoice lookups
+TransactionSchema.index({ type: 1, toUser: 1, createdAt: -1 }); // Optimized Leaderboard Aggregation
+
 export default mongoose.models.Transaction || mongoose.model<ITransaction>('Transaction', TransactionSchema);

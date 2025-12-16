@@ -20,5 +20,6 @@ const MerchantChannelSchema = new Schema({
 
 // Composite index to ensure a merchant doesn't add same channel twice
 MerchantChannelSchema.index({ merchantId: 1, channelId: 1 }, { unique: true });
+MerchantChannelSchema.index({ merchantId: 1, isActive: 1 }); // Optimize "Your Channels" list
 
 export default mongoose.models.MerchantChannel || mongoose.model<IMerchantChannel>('MerchantChannel', MerchantChannelSchema);
