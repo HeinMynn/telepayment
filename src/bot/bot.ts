@@ -9,9 +9,13 @@ if (!token) {
     throw new Error('TELEGRAM_BOT_TOKEN is not defined');
 }
 
-// Safe Configuration: Defaults
-// Removed custom client/agent config to fix 500 errors.
-let botConfig: any = {};
+// Safe Configuration: Disable Webhook Reply to prevent Vercel Freeze
+// We rely on standard HTTP calls which are awaited properly.
+const botConfig: any = {
+    client: {
+        canUseWebhookReply: (method: string) => false,
+    }
+};
 
 // Optimization: Hardcode Bot Info to skip init() (Fast Startup)
 if (process.env.TELEGRAM_BOT_USERNAME) {
