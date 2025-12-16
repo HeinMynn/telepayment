@@ -2,7 +2,6 @@ import { Bot, Context } from 'grammy';
 import { BotContext } from './types';
 import { rateLimitMiddleware } from './rateLimit';
 import { authMiddleware } from './middleware';
-import https from 'https';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -10,16 +9,11 @@ if (!token) {
     throw new Error('TELEGRAM_BOT_TOKEN is not defined');
 }
 
-// Safe Configuration:
-// 1. Disable Webhook Reply (prevents Vercel Freeze/Timeout on heavy tasks)
-// 2. Disable Keep-Alive (prevents ECONNRESET due to stale sockets on Vercel)
+// Safe Configuration: Disable Webhook Reply to prevent Vercel Freeze
+// We rely on standard HTTP calls which are awaited properly.
 const botConfig: any = {
     client: {
         canUseWebhookReply: (method: string) => false,
-        baseFetchConfig: {
-            agent: new https.Agent({ keepAlive: false }),
-            compress: true
-        }
     }
 };
 
