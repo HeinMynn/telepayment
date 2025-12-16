@@ -9,13 +9,26 @@ if (!token) {
     throw new Error('TELEGRAM_BOT_TOKEN is not defined');
 }
 
-// Safe Configuration: Disable Webhook Reply to prevent Vercel Freeze
-// We rely on standard HTTP calls which are awaited properly.
-const botConfig: any = {
-    client: {
-        canUseWebhookReply: (method: string) => false,
+// Safe Configuration: Defaults
+// Removed custom client/agent config to fix 500 errors.
+let botConfig: any = {};
+
+// Optimization: Hardcode Bot Info to skip init() (Fast Startup)
+if (process.env.TELEGRAM_BOT_USERNAME) {
+    const id = parseInt(token.split(':')[0]);
+    if (!isNaN(id)) {
+        botConfig.botInfo = {
+            id: id,
+            is_bot: true,
+            first_name: process.env.TELEGRAM_BOT_USERNAME,
+            username: process.env.TELEGRAM_BOT_USERNAME,
+            can_join_groups: true,
+            can_read_all_group_messages: false,
+            supports_inline_queries: true
+        };
+        console.log(`[Bot] Fast Startup: ${process.env.TELEGRAM_BOT_USERNAME} (${id})`);
     }
-};
+}
 
 export const bot = new Bot<BotContext>(token, botConfig);
 
