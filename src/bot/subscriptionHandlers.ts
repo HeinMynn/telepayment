@@ -262,7 +262,7 @@ export async function handleChannelDetails(ctx: BotContext, channelId: string) {
         .text("🔙 Back", `admin_channels_back`);
 
     // Add category to message
-    const catKey = `cat_${ch.category || 'other'}`;
+    const catKey = `cat_${ch.category || 'other'}` as any;
     msg += `\n📁 <b>Category:</b> ${t(l, catKey)}`;
 
     await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });

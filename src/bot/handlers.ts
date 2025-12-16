@@ -180,14 +180,13 @@ bot.callbackQuery(/^explore_cat_(.+?)(?:_page_(\d+))?$/, async (ctx) => {
     });
 
     // Pagination
-    const navRow: any[] = [];
-    if (page > 1) navRow.push({ text: '◀️ Prev', callback_data: `explore_cat_${category}_page_${page - 1}` });
-    if (hasMore) navRow.push({ text: 'Next ▶️', callback_data: `explore_cat_${category}_page_${page + 1}` });
-    if (navRow.length > 0) kb.row(...navRow.map(b => kb.text(b.text, b.callback_data)));
+    if (page > 1) kb.text('◀️ Prev', `explore_cat_${category}_page_${page - 1}`);
+    if (hasMore) kb.text('Next ▶️', `explore_cat_${category}_page_${page + 1}`);
+    if (page > 1 || hasMore) kb.row();
 
     kb.row().text('🔙 Categories', 'explore_channels');
 
-    const catLabel = category === 'all' ? t(l, 'cat_all') : t(l, `cat_${category}`);
+    const catLabel = category === 'all' ? t(l, 'cat_all') : t(l, `cat_${category}` as any);
     const msg = `🔍 <b>${catLabel}</b>\n\nPage ${page}`;
 
     if (ctx.callbackQuery?.message) {
@@ -489,7 +488,7 @@ bot.callbackQuery(/^ch_cat_(.+)$/, async (ctx) => {
     await user.save();
 
     await ctx.answerCallbackQuery({ text: "Channel added!" });
-    await ctx.editMessageText(`✅ Channel "<b>${title}</b>" added to <b>${t(l, `cat_${category}`)}</b>!`, { parse_mode: 'HTML' });
+    await ctx.editMessageText(`✅ Channel "<b>${title}</b>" added to <b>${t(l, `cat_${category}` as any)}</b>!`, { parse_mode: 'HTML' });
     await ctx.reply("Merchant Menu:", { reply_markup: getMerchantMenu(user.language) });
 });
 
