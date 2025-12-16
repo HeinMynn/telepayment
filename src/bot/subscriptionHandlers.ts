@@ -192,81 +192,138 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
 }
 
 export async function handleManageChannels(ctx: BotContext, page: number = 1) {
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { InlineKeyboard } = await import('grammy');
-    const { getPaginationKeyboard } = await import('./menus');
-    const { t } = await import('@/lib/i18n'); // Ensure t is imported
+    const {default: MerchantChannel} = await import("@/models/MerchantChannel");
 
     const user = ctx.user;
     const l = user.language as any;
-    const loadingMsg = await ctx.reply("⏳ Loading Channels...");
 
     try {
-        const PAGE_SIZE = 5;
-        const skip = (page - 1) * PAGE_SIZE;
+      const PAGE_SIZE = 5;
+      const skip = (page - 1) * PAGE_SIZE;
 
-        const totalCount = await MerchantChannel.countDocuments({ merchantId: user._id, isActive: true });
-        const totalPages = Math.ceil(totalCount / PAGE_SIZE);
-
-        if (totalCount === 0) {
-            const kb = new InlineKeyboard().text(t(l, 'channel_add_btn'), 'add_channel_start');
-            await ctx.api.editMessageText(ctx.chat?.id!, loadingMsg.message_id, t(l, 'channel_list_empty'), { reply_markup: kb });
-            return;
-        }
-
-        // Optimized: Single Query Aggregation
-        // Fetches Channels + Plan Counts in one go.
-        const channels = await MerchantChannel.aggregate([
-            { $match: { merchantId: user._id, isActive: true } },
-            { $skip: skip },
-            { $limit: PAGE_SIZE },
-            {
+      // Single roundtrip: paginate + total count + plan counts
+      const [result] = await MerchantChannel.aggregate([
+        {$match: {merchantId: user._id, isActive: true}},
+        {
+          $facet: {
+            total: [{$count: "count"}],
+            channels: [
+              {$sort: {createdAt: -1, _id: 1}},
+              {$skip: skip},
+              {$limit: PAGE_SIZE},
+              {
                 $lookup: {
-                    from: 'subscriptionplans', // Mongoose default collection name
-                    let: { chId: '$_id' },
-                    pipeline: [
-                        { $match: { $expr: { $and: [{ $eq: ['$channelId', '$$chId'] }, { $eq: ['$isActive', true] }] } } },
-                        { $count: 'count' }
-                    ],
-                    as: 'planStats'
-                }
-            },
-            {
+                  from: "subscriptionplans",
+                  let: {chId: "$_id"},
+                  pipeline: [
+                    {
+                      $match: {
+                        $expr: {
+                          $and: [
+                            {$eq: ["$channelId", "$$chId"]},
+                            {$eq: ["$isActive", true]},
+                          ],
+                        },
+                      },
+                    },
+                    {$count: "count"},
+                  ],
+                  as: "planStats",
+                },
+              },
+              {
                 $addFields: {
-                    planCount: { $ifNull: [{ $arrayElemAt: ['$planStats.count', 0] }, 0] }
-                }
-            }
-        ]);
+                  planCount: {
+                    $ifNull: [{$arrayElemAt: ["$planStats.count", 0]}, 0],
+                  },
+                },
+              },
+              {$project: {title: 1, planCount: 1}},
+            ],
+          },
+        },
+        {
+          $project: {
+            totalCount: {$ifNull: [{$arrayElemAt: ["$total.count", 0]}, 0]},
+            channels: 1,
+          },
+        },
+      ]);
 
-        let msg = `<b>📢 Your Channels (Page ${page}/${totalPages})</b>\nSelect a channel to manage plans:\n`;
+      const totalCount = result?.totalCount ?? 0;
+      const channels = result?.channels ?? [];
+      const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
-        // Dynamic Keyboard construction
-        const kb = new InlineKeyboard();
-        for (const ch of channels) {
-            msg += `\n• <b>${ch.title}</b> (${ch.planCount} Plans)`;
-            kb.text(ch.title, `manage_ch_${ch._id}`).row();
+      // If a stale page is requested after channels were removed, jump to the last page.
+      if (channels.length === 0 && totalCount > 0 && page > totalPages) {
+        return handleManageChannels(ctx, totalPages);
+      }
+
+      if (totalCount === 0) {
+        const kb = new InlineKeyboard().text(
+          t(l, "channel_add_btn"),
+          "add_channel_start"
+        );
+        if (ctx.callbackQuery) {
+          await ctx.editMessageText(t(l, "channel_list_empty"), {
+            reply_markup: kb,
+          });
+        } else {
+          await ctx.reply(t(l, "channel_list_empty"), {reply_markup: kb});
         }
+        return;
+      }
 
-        // Add Pagination Controls
-        const paginationRow = getPaginationKeyboard(page, totalPages, 'channels');
-        // Grammy's inline_keyboard is [][]InlineKeyboardButton
-        if (paginationRow.inline_keyboard.length > 0) {
-            const buttons = paginationRow.inline_keyboard[0]; // get the first row of buttons
-            kb.row();
-            // Append manually or use spread if API supports it, but .append takes ...buttons
-            buttons.forEach(btn => kb.text(btn.text, (btn as any).callback_data || 'noop'));
+      // Guard against stale page numbers
+      const safePage = Math.min(Math.max(page, 1), totalPages);
+
+      let msg = `<b>📢 Your Channels (Page ${safePage}/${totalPages})</b>\nSelect a channel to manage plans:\n`;
+
+      const kb = new InlineKeyboard();
+      for (const ch of channels) {
+        msg += `\n• <b>${ch.title}</b> (${ch.planCount} Plans)`;
+        kb.text(ch.title, `manage_ch_${ch._id}`).row();
+      }
+
+      const paginationRow = getPaginationKeyboard(
+        safePage,
+        totalPages,
+        "channels"
+      );
+      if (paginationRow.inline_keyboard.length > 0) {
+        const buttons = paginationRow.inline_keyboard[0];
+        kb.row();
+        buttons.forEach((btn) =>
+          kb.text(btn.text, (btn as any).callback_data || "noop")
+        );
+      }
+
+      kb.text(t(l, "channel_add_btn"), "add_channel_start").row();
+
+      if (ctx.callbackQuery) {
+        try {
+          await ctx.editMessageText(msg, {
+            parse_mode: "HTML",
+            reply_markup: kb,
+          });
+        } catch (err: any) {
+          if (err?.description?.includes("message is not modified")) {
+            await ctx.answerCallbackQuery({text: "Up to date"});
+            return;
+          }
+          throw err;
         }
-
-        kb.text(t(l, 'channel_add_btn'), 'add_channel_start').row();
-
-        // If updated from callback (pagination), edit. If new, reply.
-        // Since we sent a loading message, we always edit strictly speaking.
-        await ctx.api.editMessageText(ctx.chat?.id!, loadingMsg.message_id, msg, { parse_mode: 'HTML', reply_markup: kb });
-
+      } else {
+        await ctx.reply(msg, {parse_mode: "HTML", reply_markup: kb});
+      }
     } catch (error) {
-        console.error("Manage Channels Error:", error);
-        await ctx.api.editMessageText(ctx.chat?.id!, loadingMsg.message_id, "❌ Error loading channels.");
+      console.error("Manage Channels Error:", error);
+      const fallback = "❌ Error loading channels.";
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(fallback);
+      } else {
+        await ctx.reply(fallback);
+      }
     }
 }
 
