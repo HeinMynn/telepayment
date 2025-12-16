@@ -9,7 +9,32 @@ if (!token) {
     throw new Error('TELEGRAM_BOT_TOKEN is not defined');
 }
 
-export const bot = new Bot<BotContext>(token);
+let botConfig: any = {
+    client: {
+        // Optimization for Vercel: We don't need webhook reply for everything, 
+        // but this allows 'sendChatAction' to work if needed without hanging.
+        canUseWebhookReply: (method: string) => method === "sendChatAction",
+    }
+};
+
+// Optimization: Hardcode Bot Info to skip init()
+if (process.env.TELEGRAM_BOT_USERNAME) {
+    const id = parseInt(token.split(':')[0]);
+    if (!isNaN(id)) {
+        botConfig.botInfo = {
+            id: id,
+            is_bot: true,
+            first_name: process.env.TELEGRAM_BOT_USERNAME, // Fallback use username as name
+            username: process.env.TELEGRAM_BOT_USERNAME,
+            can_join_groups: true,
+            can_read_all_group_messages: false,
+            supports_inline_queries: true
+        };
+        console.log(`[Bot] Fast Startup: ${process.env.TELEGRAM_BOT_USERNAME} (${id})`);
+    }
+}
+
+export const bot = new Bot<BotContext>(token, botConfig);
 
 // Attach Middleware
 bot.use(rateLimitMiddleware); // Rate limit first

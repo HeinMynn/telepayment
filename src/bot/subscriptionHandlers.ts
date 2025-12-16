@@ -209,15 +209,24 @@ export async function handleManageChannels(ctx: BotContext) {
         return;
     }
 
+    // Optimization: Aggregation instead of Loop
+    const channelIds = channels.map(c => c._id);
+    const planCounts = await SubscriptionPlan.aggregate([
+        { $match: { channelId: { $in: channelIds }, isActive: true } },
+        { $group: { _id: '$channelId', count: { $sum: 1 } } }
+    ]);
+
+    // Map counts for easy lookup
+    const countMap: Record<string, number> = {};
+    planCounts.forEach((pc: any) => {
+        countMap[String(pc._id)] = pc.count;
+    });
+
     let msg = `<b>📢 Your Channels</b>\nSelect a channel to manage plans:\n`;
     const kb = new InlineKeyboard();
 
-    const channelsWithCounts = await Promise.all(channels.map(async (ch) => {
-        const count = await SubscriptionPlan.countDocuments({ channelId: ch._id, isActive: true });
-        return { ch, count };
-    }));
-
-    for (const { ch, count } of channelsWithCounts) {
+    for (const ch of channels) {
+        const count = countMap[String(ch._id)] || 0;
         msg += `\n• <b>${ch.title}</b> (${count} Plans)`;
         kb.text(ch.title, `manage_ch_${ch._id}`).row();
     }

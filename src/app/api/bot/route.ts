@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     try {
         // Verify webhook secret (set when registering webhook with Telegram)
         const secret = req.headers.get('x-telegram-bot-api-secret-token');
-        if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
+        if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
             console.log('[Webhook] Unauthorized request - invalid secret');
             return new Response('Forbidden', { status: 403 });
         }
@@ -30,8 +30,12 @@ export async function POST(req: Request) {
         }
 
         // Initialize the bot (fetches info from Telegram if not cached)
-        await bot.init();
-        console.log('Bot Initialized. Processing update...');
+        if (!bot.botInfo) {
+            await bot.init();
+            console.log('Bot Initialized (Network).');
+        } else {
+            console.log('Bot Initialized (Fast).');
+        }
 
         // Explicitly handle update for maximum control in serverless
         await bot.handleUpdate(body);

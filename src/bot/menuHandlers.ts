@@ -469,8 +469,23 @@ export async function showLeaderboard(ctx: BotContext) {
         });
     }
 
-    // User's own rank (this month)
-    const userRankData = await Transaction.aggregate([
+    // User's own rank (Optimized)
+    const myStats = await Transaction.aggregate([
+        {
+            $match: {
+                type: 'referral',
+                createdAt: { $gte: startOfMonth },
+                toUser: currentUser._id
+            }
+        },
+        { $group: { _id: '$toUser', count: { $sum: 1 } } }
+    ]);
+    const userCount = myStats[0]?.count || 0;
+
+    // Count how many people have MORE referrals than me
+    // We need to group by user first, then count the groups having count > userCount
+    // This is still heavy-ish (requires group) but we don't transfer data back to app
+    const output = await Transaction.aggregate([
         {
             $match: {
                 type: 'referral',
@@ -478,13 +493,14 @@ export async function showLeaderboard(ctx: BotContext) {
             }
         },
         { $group: { _id: '$toUser', count: { $sum: 1 } } },
-        { $sort: { count: -1 } }
+        { $match: { count: { $gt: userCount } } },
+        { $count: "betterThanMe" }
     ]);
 
-    const userRank = userRankData.findIndex(e => e._id.toString() === currentUser._id.toString());
-    const userCount = userRank >= 0 ? userRankData[userRank].count : 0;
+    const betterThanMe = output[0]?.betterThanMe || 0;
+    const rank = betterThanMe + 1;
 
-    msg += `\n<i>Your Rank: ${userRank >= 0 ? `#${userRank + 1}` : 'Unranked'} (${userCount} this month)</i>`;
+    msg += `\n<i>Your Rank: #${rank} (${userCount} this month)</i>`;
 
     await ctx.reply(msg, { parse_mode: 'HTML' });
 }
