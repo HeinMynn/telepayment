@@ -6,7 +6,8 @@ export function getMainMenu(role: string, lang: string = 'en') {
     const keyboard = new Keyboard()
         .text(t(l, 'balance_btn')).text(t(l, 'topup_btn')).row()
         .text(t(l, 'my_subs_btn')).row()
-        .text(t(l, 'history_btn')).text(t(l, 'settings_btn'));
+        .text(t(l, 'history_btn')).text(t(l, 'settings_btn')).row()
+        .text(t(l, 'how_to_use_btn'));
 
     if (role === 'merchant') {
         keyboard.row().text(t(l, 'menu_merchant'));
@@ -30,7 +31,7 @@ export function getInvoiceMenu(lang: string = 'en') {
     const l = lang as any;
     return new Keyboard()
         .text(t(l, 'invoice_create')).text(t(l, 'invoice_view')).row()
-        .text(t(l, 'back_merchant'))
+        .text(t(l, 'back_merchant')).text(t(l, 'back_main'))
         .resized();
 }
 
@@ -38,7 +39,7 @@ export function getInvoiceTypeMenu(lang: string = 'en') {
     const l = lang as any;
     return new Keyboard()
         .text(t(l, 'invoice_type_onetime')).text(t(l, 'invoice_type_reusable')).row()
-        .text(t(l, 'back_merchant')) // Was back_main
+        .text(t(l, 'back_merchant')).text(t(l, 'back_main')) // Home added
         .resized();
 }
 
@@ -81,4 +82,20 @@ export function getProviderKeyboard(lang: string = 'en') {
         .text(t(l, 'provider_kpay')).text(t(l, 'provider_wave')).row()
         .text(t(l, 'cancel'))
         .resized();
+}
+
+export function getTopupAmountsKeyboard(lang: string = 'en') {
+    const l = lang as any;
+    return new Keyboard()
+        .text("5,000").text("10,000").row()
+        .text("30,000").text("50,000").row()
+        .text("Custom Amount").row()
+        .text(t(l, 'cancel'))
+        .resized();
+}
+
+export function getCancelInlineKeyboard(lang: string = 'en') {
+    const l = lang as any;
+    return new InlineKeyboard()
+        .text(t(l, 'cancel') || "Cancel", "cancel_topup_upload");
 }

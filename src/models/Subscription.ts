@@ -26,4 +26,6 @@ const SubscriptionSchema = new Schema({
     notifiedExpired: { type: Boolean, default: false }
 }, { timestamps: true });
 
+SubscriptionSchema.index({ userId: 1, endDate: -1 });
+
 export default mongoose.models.Subscription || mongoose.model<ISubscription>('Subscription', SubscriptionSchema);

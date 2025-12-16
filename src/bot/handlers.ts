@@ -63,6 +63,12 @@ bot.command('start', async (ctx) => {
         const keyboard = new InlineKeyboard().text(t(user.language as any, 'tos_agree'), 'accept_tos');
         await ctx.reply(t(user.language as any, 'welcome') + "\n\n" + t(user.language as any, 'tos_text'), { reply_markup: keyboard });
     } else {
+        // Visual Onboarding
+        try {
+            const { sendVisualOnboarding } = await import('./menuHandlers');
+            await sendVisualOnboarding(ctx);
+        } catch (e) { console.error("Onboarding Error", e); }
+
         // Send Main Menu
         const { getMainMenu } = await import('./menus');
         await ctx.reply(t(user.language as any, 'welcome'), { reply_markup: getMainMenu(user.role, user.language) });
@@ -74,13 +80,77 @@ bot.callbackQuery('accept_tos', async (ctx) => {
     // ... logic
 });
 
+
+bot.callbackQuery('cancel_topup_upload', async (ctx) => {
+    const user = ctx.user;
+    user.interactionState = 'idle';
+    user.tempData = undefined;
+    await user.save();
+
+    const { getMainMenu } = await import('./menus');
+    await ctx.answerCallbackQuery("Cancelled.");
+    try {
+        await ctx.editMessageText("Upload cancelled.");
+    } catch (e) { /* ignore */ }
+
+    await ctx.reply("Cancelled.", { reply_markup: getMainMenu(user.role, user.language) });
+});
+
+bot.callbackQuery(/^mysubs_(\d+)$/, async (ctx) => {
+    const page = parseInt(ctx.match[1]);
+    const { showUserSubscriptions } = await import('./subscriptionHandlers');
+    await showUserSubscriptions(ctx, page);
+});
+
+// Onboarding Carousel
+bot.callbackQuery(/^onboard_(.+)$/, async (ctx) => {
+    const step = ctx.match[1];
+    const { handleOnboardingCallback } = await import('./menuHandlers');
+    await handleOnboardingCallback(ctx, step);
+});
+
+bot.callbackQuery('explore_channels', async (ctx) => {
+    // Show list of channels? Or random?
+    // Let's reuse logic from MerchantChannel fetch, but formatted for User browsing.
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { InlineKeyboard } = await import('grammy');
+
+    // Find channels with at least 1 active plan
+    // This is complex in Mongo without aggregation, but let's do simple:
+    const channels = await MerchantChannel.find({ isActive: true });
+
+    // Filter by having plans
+    const validChannels: any[] = [];
+    for (const ch of channels) {
+        const count = await SubscriptionPlan.countDocuments({ channelId: ch._id, isActive: true });
+        if (count > 0) validChannels.push(ch);
+    }
+
+    if (validChannels.length === 0) {
+        return ctx.answerCallbackQuery("No channels available right now.");
+    }
+
+    const kb = new InlineKeyboard();
+    validChannels.forEach(ch => {
+        kb.text(`📢 ${ch.title}`, `ch_${ch._id}`).row();
+    });
+
+    await ctx.reply("🔍 <b>Explore Channels</b>\nSelect a channel to view plans:", {
+        parse_mode: 'HTML',
+        reply_markup: kb
+    });
+    await ctx.answerCallbackQuery();
+});
+
+
 // Handle Renew (Callback)
 bot.on('callback_query:data', async (ctx, next) => {
     if (ctx.callbackQuery.data.startsWith('renew_sub_')) {
-        const { handleSubscriptionStart } = await import('./subscriptionHandlers');
-        // adapt renew_sub_ID -> sub_ID
-        const payload = ctx.callbackQuery.data.replace('renew_', '');
-        return handleSubscriptionStart(ctx, payload);
+        const { handleChannelStart } = await import('./subscriptionHandlers');
+        // adapt renew_sub_CHANNELID -> ch_CHANNELID
+        const payload = ctx.callbackQuery.data.replace('renew_sub_', 'ch_');
+        return handleChannelStart(ctx, payload);
     }
     await next();
 });

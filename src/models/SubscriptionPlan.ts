@@ -14,4 +14,6 @@ const SubscriptionPlanSchema = new Schema({
     isActive: { type: Boolean, default: true }
 }, { timestamps: true });
 
+SubscriptionPlanSchema.index({ channelId: 1, isActive: 1 });
+
 export default mongoose.models.SubscriptionPlan || mongoose.model<ISubscriptionPlan>('SubscriptionPlan', SubscriptionPlanSchema);

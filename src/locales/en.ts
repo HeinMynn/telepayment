@@ -10,9 +10,9 @@ export const en = {
     invoice_title: "Payment Invoice",
     pay_warning: "You are sending money to [Merchant Name]. This transaction is IRREVERSIBLE. The platform is NOT responsible if the merchant does not deliver. Do you trust this person?",
     pay_cancel: "❌ Cancel",
-    pay_confirm: "💸 Yes, Pay (Final)",
-    payment_success: "Payment Successful!",
-    payment_failed: "Payment Failed.",
+    pay_confirm: "💸 Yes, Secure Pay",
+    payment_success: "✅ Payment Successful! Your funds are safe.",
+    payment_failed: "Payment Failed. Please try again.",
     insufficient_funds: "Insufficient funds.",
     account_frozen: "Your account is frozen.",
     error_generic: "An error occurred.",
@@ -44,13 +44,13 @@ export const en = {
     withdraw_btn: "📤 Withdraw",
 
     // Topup
-    topup_intro: "Top Up Rules:\nMinimum: 3,000 MMK.\n\nType /cancel to stop.",
+    topup_intro: "Top Up Rules:\nMinimum: 3,000 MMK.\nYour funds are held securely until verified.\n\nType /cancel to stop.",
     // topup_payment_info: DEPRECATED or used as fallback
-    admin_kpay_info: "🏦 **Admin KBZ Pay**\nName: Mr. Admin\nAccount: 0912345678\n\nPlease transfer to this account.",
-    admin_wave_info: "money_with_wings **Admin Wave Pay**\nName: Mr. Admin\nAccount: 0912345678\n\nPlease transfer to this account.",
+    admin_kpay_info: "🏦 **Admin KBZ Pay**\nName: Mr. Admin\nAccount: 0912345678\n\nPlease transfer to this official account.",
+    admin_wave_info: "money_with_wings **Admin Wave Pay**\nName: Mr. Admin\nAccount: 0912345678\n\nPlease transfer to this official account.",
     enter_topup_amount: "Please enter transferred amount (MMK):",
     enter_proof: "Please upload the payment receipt (Photo).",
-    topup_submitted: "✅ Receipt received! Admin is verifying...",
+    topup_submitted: "✅ Receipt Received! Our team is verifying it securely...",
     topup_rejected_reason: "❌ Topup Rejected.\nReason: {reason}",
     admin_reject_reason_prompt: "Please enter rejection reason:",
     cancel: "❌ Cancel",
@@ -64,7 +64,7 @@ export const en = {
     provider_wave: "Wave Pay",
     enter_account_name: "Enter Account Name (e.g. U Mya):",
     enter_account_number: "Enter Account Number (e.g. 0912345678):",
-    account_added: "✅ Payment Account Saved:\n{account}",
+    account_added: "✅ Payment Account Saved Securely:\n{account}",
     error_invalid_phone_format: "Invalid format. Number must start with 09, 959, or +959 and contain only digits.",
 
     // Merchant
@@ -82,9 +82,9 @@ export const en = {
 
     invoice_create: "➕ Create Invoice",
     invoice_view: "👀 View Invoices",
-    back_main: "🔙 Main Menu",
+    back_main: "🏠 Home",
     switch_to_user: "👤 Switch to User",
-    back_merchant: "🔙 Back to Merchant",
+    back_merchant: "🔙 Menu",
     invoice_type_onetime: "1️⃣ One Time",
     invoice_type_reusable: "🔁 Reusable",
     select_invoice_type: "Select Invoice Type:",
@@ -109,6 +109,12 @@ export const en = {
     sub_intro: "📢 **{channel}**\n\nChoose a subscription plan:",
     sub_plan_btn: "{duration} Months - {price} MMK",
     sub_confirm: "Confirm subscription for {price} MMK?",
-    sub_success: "✅ Subscription Active!\n\nHere is your ONE-TIME invite link:\n{link}\n\n(Link expires in 24h, please join immediately!)",
-    sub_fail_balance: "Insufficient Balance. Please Top Up."
+    sub_success: "✅ Subscription Active! Enjoy your premium content.\n\nHere is your ONE-TIME invite link:\n{link}\n\n(Link expires in 24h, please join immediately!)",
+    sub_fail_balance: "Insufficient Balance. Please Top Up.",
+
+    // Onboarding
+    how_to_use_btn: "❓ How to Use",
+    onboard_cap_1: "1️⃣ **Top Up**: Add funds securely via KPay or Wave.",
+    onboard_cap_2: "2️⃣ **Browse**: Choose from our premium channels.",
+    onboard_cap_3: "3️⃣ **Enjoy**: Get instant access link & enjoy content!"
 };

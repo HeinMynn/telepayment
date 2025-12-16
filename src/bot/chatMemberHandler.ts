@@ -45,7 +45,7 @@ bot.on('chat_member', async (ctx) => {
 
     try {
         // Send to Private Chat
-        await ctx.api.sendMessage(userId, `Welcome to <b>${channel.title}</b>!`, {
+        await ctx.api.sendMessage(userId, `✅ <b>You're In!</b>\n\nYour subscription to <b>${channel.title}</b> is active.`, {
             parse_mode: 'HTML',
             reply_markup: kb
         });

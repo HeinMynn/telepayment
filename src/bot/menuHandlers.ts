@@ -31,41 +31,16 @@ export async function handleMenuClick(ctx: BotContext) {
     }
 
     // 3. Main Menu -> My Subscriptions
-    if (text === "📅 My Subscriptions") {
-        const { default: Subscription } = await import('@/models/Subscription');
-        const { default: MerchantChannel } = await import('@/models/MerchantChannel'); // Ensure population works
+    // 3. Main Menu -> My Subscriptions
+    // Use dynamic key or explicit matching
+    if (text === t(l, 'my_subs_btn') || text === "📅 My Subscriptions" || text.includes("My Subscriptions")) {
+        const loading = await ctx.reply("⏳ Loading...");
+        const { showUserSubscriptions } = await import('./subscriptionHandlers');
 
-        const subs = await Subscription.find({ userId: user._id }).populate('channelId').sort({ endDate: -1 });
+        // Artificial delay so user sees "Loading"
+        await new Promise(r => setTimeout(r, 800));
 
-        if (subs.length === 0) {
-            await ctx.reply("You have no subscriptions.");
-            return;
-        }
-
-        let msg = "📅 <b>My Subscriptions</b>\n\n";
-
-        for (const sub of subs) {
-            const channel = sub.channelId as any;
-            if (!channel) continue;
-
-            const statusIcon = sub.status === 'active' ? '✅' : '❌';
-            const dateStr = new Date(sub.endDate).toLocaleDateString();
-
-            msg += `<b>${channel.title}</b>\n`;
-            msg += `Status: ${sub.status.toUpperCase()} ${statusIcon}\n`;
-            msg += `Expires: ${dateStr}\n`;
-
-            if (sub.status !== 'active') { // Show renew link if expired? Or reuse renew_sub_ID logic via button
-                // We can add a Renew Button below the text list? 
-                // If list is long, buttons are tricky.
-                // Just show status. 
-            }
-            msg += "\n";
-        }
-
-        // Maybe add buttons for each expired sub? Too complex for text list.
-        // Just text for now.
-        await ctx.reply(msg, { parse_mode: 'HTML' });
+        await showUserSubscriptions(ctx, 1, loading.message_id);
         return;
     }
 
@@ -165,7 +140,7 @@ export async function handleMenuClick(ctx: BotContext) {
         const { default: MerchantChannel } = await import('@/models/MerchantChannel');
         const channels = await MerchantChannel.find({ merchantId: user._id, isActive: true });
 
-        const { InlineKeyboard } = await import('grammy');
+        const { InlineKeyboard, InputFile } = await import('grammy');
         const kb = new InlineKeyboard();
 
         if (channels.length > 0) {
@@ -191,6 +166,12 @@ export async function handleMenuClick(ctx: BotContext) {
     // Back to Merchant
     if (text === t(l, 'back_merchant')) {
         await ctx.reply("Merchant Menu:", { reply_markup: getMerchantMenu(user.language) });
+        return;
+    }
+
+    // 9. How to Use
+    if (text === t(l, 'how_to_use_btn')) {
+        await sendVisualOnboarding(ctx);
         return;
     }
 }
@@ -236,9 +217,42 @@ export async function showHistory(ctx: BotContext, page: number) {
     let report = `📜 <b>History (Page ${page}/${totalPages})</b>\n`;
     txs.forEach(tx => {
         const date = new Date(tx.createdAt).toLocaleDateString();
-        // Maybe add Amount with Comma
-        report += `\n📅 ${date} | <b>${(tx.type || 'TX').toUpperCase()}</b>`;
-        report += `\n💸 ${tx.amount.toLocaleString()} MMK (${tx.status})`;
+
+        // Status Icons
+        let statusIcon = '⏳'; // pending
+        if (tx.status === 'completed' || tx.status === 'approved') statusIcon = '✅';
+        else if (tx.status === 'rejected' || tx.status === 'failed') statusIcon = '❌';
+
+        // Direction Logic
+        const userIdStr = user._id.toString();
+        const fromIdStr = tx.fromUser ? tx.fromUser.toString() : '';
+        const toIdStr = tx.toUser ? tx.toUser.toString() : '';
+
+        let dirIcon = '';
+        let sign = '';
+
+        // Explicit Types
+        if (tx.type === 'topup') {
+            dirIcon = '📥';
+            sign = '+';
+        }
+        else if (tx.type === 'withdraw') {
+            dirIcon = '📤';
+            sign = '-';
+        }
+        else {
+            // P2P or Subscription
+            if (toIdStr === userIdStr) {
+                dirIcon = '📥';
+                sign = '+';
+            } else {
+                dirIcon = '📤';
+                sign = '-';
+            }
+        }
+
+        report += `\n${statusIcon} <b>${(tx.type || 'TX').toUpperCase()}</b> ${dirIcon}`;
+        report += `\n📅 ${date} | 💸 ${sign}${tx.amount.toLocaleString()} MMK`;
         report += `\n`;
     });
 
@@ -288,6 +302,57 @@ export async function showSettings(ctx: BotContext) {
     } else {
         await ctx.reply(msg, { reply_markup: kb, parse_mode: 'HTML' });
     }
+}
+
+export async function sendVisualOnboarding(ctx: BotContext) {
+    const { InputFile, InlineKeyboard } = await import('grammy');
+    const { t } = await import('@/lib/i18n');
+    const l = ctx.user.language as any;
+
+    // Step 1: Send Image 1 with 'Next' button
+    const kb = new InlineKeyboard().text("Next ➡️", "onboard_2");
+
+    await ctx.replyWithPhoto(new InputFile('assets/guide_1.png'), {
+        caption: t(l, 'onboard_cap_1'),
+        parse_mode: 'Markdown',
+        reply_markup: kb
+    });
+}
+
+export async function handleOnboardingCallback(ctx: BotContext, step: string) {
+    const { InputFile, InlineKeyboard } = await import('grammy');
+    const { t } = await import('@/lib/i18n');
+    const l = ctx.user.language as any;
+
+    let mediaPath = '';
+    let caption = '';
+    let kb = new InlineKeyboard();
+
+    if (step === '1') {
+        mediaPath = 'assets/guide_1.png';
+        caption = t(l, 'onboard_cap_1');
+        kb.text("Next ➡️", "onboard_2");
+    } else if (step === '2') {
+        mediaPath = 'assets/guide_2.png';
+        caption = t(l, 'onboard_cap_2');
+        kb.text("⬅️ Prev", "onboard_1").text("Next ➡️", "onboard_3");
+    } else if (step === '3') {
+        mediaPath = 'assets/guide_3.png';
+        caption = t(l, 'onboard_cap_3');
+        kb.text("⬅️ Prev", "onboard_2").text("Done ✅", "onboard_done");
+    } else if (step === 'done') {
+        await ctx.deleteMessage();
+        return;
+    }
+
+    try {
+        await ctx.editMessageMedia({
+            type: 'photo',
+            media: new InputFile(mediaPath),
+            caption: caption,
+            parse_mode: 'Markdown'
+        }, { reply_markup: kb });
+    } catch (e) { /* ignore */ }
 }
 
 

@@ -1,14 +1,16 @@
 import { BotContext } from './types';
-import { getMainMenu, getMerchantMenu, getInvoiceMenu, getBackMerchantKeyboard, getCancelKeyboard } from './menus';
+import { getMainMenu, getMerchantMenu, getInvoiceMenu, getBackMerchantKeyboard, getCancelKeyboard, getTopupAmountsKeyboard } from './menus';
 import { t } from '@/lib/i18n';
 
 export async function handleState(ctx: BotContext) {
     try {
+        if (!ctx.message) return;
         const user = ctx.user;
         const state = user.interactionState;
         const text = ctx.message?.text;
         const photo = ctx.message?.photo;
         const l = user.language as any;
+        console.log(`[DEBUG] handleState: state=${state}, text=${text}`);
 
         if (state === 'awaiting_account_details') {
             if (!text) return ctx.reply("Please enter details.");
@@ -43,8 +45,17 @@ export async function handleState(ctx: BotContext) {
             return;
         }
 
+        if (text === t(l, 'back_merchant')) {
+            user.interactionState = 'idle';
+            user.tempData = undefined;
+            await user.save();
+            await ctx.reply("Merchant Menu:", { reply_markup: getMerchantMenu(user.language) });
+            return;
+        }
+
         // Invoice Types
         if (state === 'selecting_invoice_type_create') {
+            console.log(`[DEBUG] entering selecting_invoice_type_create`);
             let type: 'one-time' | 'reusable' = 'one-time';
             if (text === t(l, 'invoice_type_reusable')) type = 'reusable';
             else if (text !== t(l, 'invoice_type_onetime')) {
@@ -54,6 +65,10 @@ export async function handleState(ctx: BotContext) {
 
             // Limit Check
             const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+            // Init safely
+            if (!user.invoiceUsage) user.invoiceUsage = { oneTime: 0, reusable: 0, month: '' };
+
             if (user.invoiceUsage.month !== currentMonth) {
                 user.invoiceUsage = { oneTime: 0, reusable: 0, month: currentMonth };
             }
@@ -187,6 +202,7 @@ export async function handleState(ctx: BotContext) {
         }
 
         if (state === 'selecting_invoice_type_view') {
+            console.log(`[DEBUG] entering selecting_invoice_type_view`);
             let type: 'one-time' | 'reusable' = 'one-time';
             if (text === t(l, 'invoice_type_reusable')) type = 'reusable';
 
@@ -243,31 +259,69 @@ export async function handleState(ctx: BotContext) {
                 return;
             }
 
-            // Show Admin Account
+
+
+            // Ask Amount (Streamlined: Show Buttons)
+            user.tempData = { topupProvider: provider };
+            user.interactionState = 'awaiting_topup_amount_selection';
+            await user.save();
+            await ctx.reply(t(l, 'enter_topup_amount') || "Select amount:", { reply_markup: getTopupAmountsKeyboard(user.language) });
+            return;
+        }
+
+        if (state === 'awaiting_topup_amount_selection') {
+            if (text === "Custom Amount") {
+                user.interactionState = 'awaiting_topup_amount_custom';
+                await user.save();
+                await ctx.reply("Please enter the amount (MMK):", { reply_markup: getCancelKeyboard(user.language) });
+                return;
+            }
+
+            // check preset
+            const cleaned = (text || '').replace(/,/g, '');
+            const amount = parseInt(cleaned);
+
+            if (isNaN(amount) || amount < 3000) {
+                await ctx.reply("Please select a button or choose Custom Amount.");
+                return;
+            }
+
+            // Proceed to Proof
+            user.tempData = { ...user.tempData, topupAmount: amount };
+            user.interactionState = 'awaiting_topup_proof';
+            await user.save();
+
+            const provider = user.tempData.topupProvider;
             if (provider === 'kpay') {
                 await ctx.reply(t(l, 'admin_kpay_info'), { parse_mode: 'Markdown' });
             } else {
                 await ctx.reply(t(l, 'admin_wave_info'), { parse_mode: 'Markdown' });
             }
 
-            // Ask Amount
-            user.tempData = { topupProvider: provider };
-            user.interactionState = 'awaiting_topup_amount';
-            await user.save();
-            await ctx.reply(t(l, 'enter_topup_amount'), { reply_markup: getCancelKeyboard(user.language) });
+            await ctx.reply(t(l, 'enter_proof') || "Please upload the payment screenshot.", {
+                parse_mode: 'Markdown',
+                reply_markup: getCancelKeyboard(user.language) // Allow backing out
+            });
             return;
         }
 
-        if (state === 'awaiting_topup_amount') {
+        if (state === 'awaiting_topup_amount_custom') { // Old awaiting_topup_amount
             const amount = parseInt(text || '');
             if (isNaN(amount) || amount < 3000) {
                 await ctx.reply("Min amount is 3000 MMK. Try again or /cancel.");
                 return;
             }
             // Save to tempData, next state
-            user.tempData = { ...user.tempData, topupAmount: amount }; // merge provider
+            user.tempData = { ...user.tempData, topupAmount: amount };
             user.interactionState = 'awaiting_topup_proof';
             await user.save();
+
+            const provider = user.tempData.topupProvider;
+            if (provider === 'kpay') {
+                await ctx.reply(t(l, 'admin_kpay_info'), { parse_mode: 'Markdown' });
+            } else {
+                await ctx.reply(t(l, 'admin_wave_info'), { parse_mode: 'Markdown' });
+            }
 
             await ctx.reply(t(l, 'enter_proof'), { parse_mode: 'Markdown' });
             return;
@@ -316,7 +370,10 @@ export async function handleState(ctx: BotContext) {
 
         if (state === 'awaiting_topup_proof') {
             if (!photo) {
-                await ctx.reply("Please upload a photo.");
+                const { getCancelInlineKeyboard } = await import('./menus');
+                await ctx.reply("Please upload a photo of the receipt.", {
+                    reply_markup: getCancelInlineKeyboard(user.language)
+                });
                 return;
             }
 
@@ -387,6 +444,8 @@ export async function handleState(ctx: BotContext) {
             await ctx.reply(t(l, 'topup_submitted'), { reply_markup: getMainMenu(user.role, user.language) });
             return;
         }
+
+
 
         // Admin Rejection Reason
         if (state === 'awaiting_reject_reason') {
@@ -520,7 +579,7 @@ export async function handleState(ctx: BotContext) {
                 amount: amount,
                 status: 'active',
                 uniqueId: uniqueId,
-                createdMonth: user.invoiceUsage.month
+                createdMonth: user.invoiceUsage?.month || new Date().toISOString().slice(0, 7)
             });
 
             const botUsername = ctx.me?.username || 'bot';
@@ -715,6 +774,7 @@ export async function handleState(ctx: BotContext) {
         await ctx.reply("Unknown state reset.", { reply_markup: getMainMenu(user.role, user.language) });
     } catch (err) {
         console.error("State Handler Error:", err);
+        console.log(err);
         await ctx.reply("An error occurred. State reset.");
         ctx.user.interactionState = 'idle';
         await ctx.user.save();

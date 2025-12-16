@@ -111,7 +111,8 @@ export async function authMiddleware(ctx: BotContext, next: NextFunction) {
     }
 
     // State Routing
-    if (user.interactionState && user.interactionState !== 'idle') {
+    // Only route MESSAGES to state handler. Callbacks should flow to listeners.
+    if (user.interactionState && user.interactionState !== 'idle' && ctx.message) {
         // Dynamic import to avoid circular dependency if stateHandler imports types that might import middleware? 
         // Actually imports are fine: stateHandler -> types. middleware -> types.
         const { handleState } = await import('./stateHandler');
