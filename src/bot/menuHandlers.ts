@@ -428,7 +428,6 @@ export async function handleOnboardingCallback(ctx: BotContext, step: string) {
 }
 
 export async function showLeaderboard(ctx: BotContext) {
-    const { default: User } = await import('@/models/User');
     const { default: Transaction } = await import('@/models/Transaction');
     const currentUser = ctx.user;
 
@@ -437,24 +436,38 @@ export async function showLeaderboard(ctx: BotContext) {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
 
-    // Aggregate: Count referral bonus transactions per referrer (this month)
-    // Each 'referral' type transaction represents a successful referral claim
-    const leaderboard = await Transaction.aggregate([
-        {
-            $match: {
-                type: 'referral',
-                createdAt: { $gte: startOfMonth }
+    // Parallel Execution: Top 10 + My Count
+    const [leaderboard, myCount] = await Promise.all([
+        // 1. Get Top 10 with User Details in ONE query
+        Transaction.aggregate([
+            { $match: { type: 'referral', createdAt: { $gte: startOfMonth } } },
+            { $group: { _id: '$toUser', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 10 },
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'user'
+                }
+            },
+            { $unwind: '$user' },
+            {
+                $project: {
+                    username: '$user.username',
+                    firstName: '$user.firstName',
+                    count: 1
+                }
             }
-        },
-        { $group: { _id: '$toUser', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $limit: 10 }
+        ]),
+        // 2. Get My Referral Count (Fast)
+        Transaction.countDocuments({
+            type: 'referral',
+            createdAt: { $gte: startOfMonth },
+            toUser: currentUser._id
+        })
     ]);
-
-    // Get user details for display
-    const referrerIds = leaderboard.map(e => e._id);
-    const referrers = await User.find({ _id: { $in: referrerIds } });
-    const referrerMap = new Map(referrers.map(r => [r._id.toString(), r]));
 
     // Build display
     let msg = `🏆 <b>Top Referrers - ${monthName}</b>\n\n`;
@@ -464,45 +477,31 @@ export async function showLeaderboard(ctx: BotContext) {
     } else {
         const badges = ['🥇', '🥈', '🥉'];
         leaderboard.forEach((entry, i) => {
-            const referrer = referrerMap.get(entry._id.toString());
-            const displayName = maskUsername(referrer?.username, referrer?.firstName);
+            const displayName = maskUsername(entry.username, entry.firstName);
             const badge = badges[i] || `${i + 1}.`;
             msg += `${badge} ${displayName} - <b>${entry.count}</b> referrals\n`;
         });
     }
 
-    // User's own rank (Optimized)
-    const myStats = await Transaction.aggregate([
-        {
-            $match: {
-                type: 'referral',
-                createdAt: { $gte: startOfMonth },
-                toUser: currentUser._id
-            }
-        },
-        { $group: { _id: '$toUser', count: { $sum: 1 } } }
-    ]);
-    const userCount = myStats[0]?.count || 0;
+    // 3. Conditional Rank Calculation (Only if I have referrals)
+    let rankText = '';
+    if (myCount > 0) {
+        // Count how many people have MORE referrals than me
+        // We optimize by NOT grouping everyone, but filtering early if possible. 
+        // Actually grouping is required to count per-user.
+        const output = await Transaction.aggregate([
+            { $match: { type: 'referral', createdAt: { $gte: startOfMonth } } },
+            { $group: { _id: '$toUser', count: { $sum: 1 } } },
+            { $match: { count: { $gt: myCount } } },
+            { $count: "betterThanMe" }
+        ]);
+        const rank = (output[0]?.betterThanMe || 0) + 1;
+        rankText = `\n<i>Your Rank: #${rank} (${myCount} this month)</i>`;
+    } else {
+        rankText = `\n<i>Your Rank: - (${myCount} this month)</i>`;
+    }
 
-    // Count how many people have MORE referrals than me
-    // We need to group by user first, then count the groups having count > userCount
-    // This is still heavy-ish (requires group) but we don't transfer data back to app
-    const output = await Transaction.aggregate([
-        {
-            $match: {
-                type: 'referral',
-                createdAt: { $gte: startOfMonth }
-            }
-        },
-        { $group: { _id: '$toUser', count: { $sum: 1 } } },
-        { $match: { count: { $gt: userCount } } },
-        { $count: "betterThanMe" }
-    ]);
-
-    const betterThanMe = output[0]?.betterThanMe || 0;
-    const rank = betterThanMe + 1;
-
-    msg += `\n<i>Your Rank: #${rank} (${userCount} this month)</i>`;
+    msg += rankText;
 
     await ctx.reply(msg, { parse_mode: 'HTML' });
 }
