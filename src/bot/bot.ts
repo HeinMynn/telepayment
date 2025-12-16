@@ -1,7 +1,8 @@
-import { Bot } from 'grammy';
+import { Bot, Context } from 'grammy';
 import { BotContext } from './types';
 import { rateLimitMiddleware } from './rateLimit';
 import { authMiddleware } from './middleware';
+import https from 'https';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -9,24 +10,18 @@ if (!token) {
     throw new Error('TELEGRAM_BOT_TOKEN is not defined');
 }
 
-let botConfig: any = {};
-
-// Optimization: Hardcode Bot Info to skip init()
-if (process.env.TELEGRAM_BOT_USERNAME) {
-    const id = parseInt(token.split(':')[0]);
-    if (!isNaN(id)) {
-        botConfig.botInfo = {
-            id: id,
-            is_bot: true,
-            first_name: process.env.TELEGRAM_BOT_USERNAME, // Fallback use username as name
-            username: process.env.TELEGRAM_BOT_USERNAME,
-            can_join_groups: true,
-            can_read_all_group_messages: false,
-            supports_inline_queries: true
-        };
-        console.log(`[Bot] Fast Startup: ${process.env.TELEGRAM_BOT_USERNAME} (${id})`);
+// Safe Configuration:
+// 1. Disable Webhook Reply (prevents Vercel Freeze/Timeout on heavy tasks)
+// 2. Disable Keep-Alive (prevents ECONNRESET due to stale sockets on Vercel)
+const botConfig: any = {
+    client: {
+        canUseWebhookReply: (method: string) => false,
+        baseFetchConfig: {
+            agent: new https.Agent({ keepAlive: false }),
+            compress: true
+        }
     }
-}
+};
 
 export const bot = new Bot<BotContext>(token, botConfig);
 
