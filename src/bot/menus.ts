@@ -7,7 +7,8 @@ export function getMainMenu(role: string, lang: string = 'en') {
         .text(t(l, 'balance_btn')).text(t(l, 'topup_btn')).row()
         .text(t(l, 'my_subs_btn')).row()
         .text(t(l, 'history_btn')).text(t(l, 'settings_btn')).row()
-        .text(t(l, 'how_to_use_btn'));
+        .text(t(l, 'invite_btn')).text(t(l, 'how_to_use_btn')).row()
+        .text(t(l, 'leaderboard_btn'));
 
     if (role === 'merchant') {
         keyboard.row().text(t(l, 'menu_merchant'));

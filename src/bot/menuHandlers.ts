@@ -174,6 +174,28 @@ export async function handleMenuClick(ctx: BotContext) {
         await sendVisualOnboarding(ctx);
         return;
     }
+
+    // 10. Invite Friends
+    if (text === t(l, 'invite_btn')) {
+        if (!ctx.me?.username) return;
+        const link = `https://t.me/${ctx.me.username}?start=ref_${user.telegramId}`;
+        const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Join me on this awesome payment bot!')}`;
+
+        const { InlineKeyboard } = await import('grammy');
+        const kb = new InlineKeyboard().url('📤 Share with Friends', shareUrl);
+
+        await ctx.reply(`🎁 <b>Invite Friends & Earn!</b>\n\nShare this link. When a friend joins and makes their FIRST top-up, you earn <b>1%</b> of the amount!\n\n🔗 Your Link:\n<blockquote><code>${link}</code></blockquote>`, {
+            parse_mode: 'HTML',
+            reply_markup: kb
+        });
+        return;
+    }
+
+    // 11. Leaderboard
+    if (text === t(l, 'leaderboard_btn')) {
+        await showLeaderboard(ctx);
+        return;
+    }
 }
 
 export async function startTopupflow(ctx: BotContext) {
@@ -355,4 +377,78 @@ export async function handleOnboardingCallback(ctx: BotContext, step: string) {
     } catch (e) { /* ignore */ }
 }
 
+export async function showLeaderboard(ctx: BotContext) {
+    const { default: User } = await import('@/models/User');
+    const { default: Transaction } = await import('@/models/Transaction');
+    const currentUser = ctx.user;
 
+    // Get start of current month
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+    // Aggregate: Count referral bonus transactions per referrer (this month)
+    // Each 'referral' type transaction represents a successful referral claim
+    const leaderboard = await Transaction.aggregate([
+        {
+            $match: {
+                type: 'referral',
+                createdAt: { $gte: startOfMonth }
+            }
+        },
+        { $group: { _id: '$toUser', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+    ]);
+
+    // Get user details for display
+    const referrerIds = leaderboard.map(e => e._id);
+    const referrers = await User.find({ _id: { $in: referrerIds } });
+    const referrerMap = new Map(referrers.map(r => [r._id.toString(), r]));
+
+    // Build display
+    let msg = `🏆 <b>Top Referrers - ${monthName}</b>\n\n`;
+
+    if (leaderboard.length === 0) {
+        msg += 'No successful referrals yet this month. Be the first!\n';
+    } else {
+        const badges = ['🥇', '🥈', '🥉'];
+        leaderboard.forEach((entry, i) => {
+            const referrer = referrerMap.get(entry._id.toString());
+            const displayName = maskUsername(referrer?.username, referrer?.firstName);
+            const badge = badges[i] || `${i + 1}.`;
+            msg += `${badge} ${displayName} - <b>${entry.count}</b> referrals\n`;
+        });
+    }
+
+    // User's own rank (this month)
+    const userRankData = await Transaction.aggregate([
+        {
+            $match: {
+                type: 'referral',
+                createdAt: { $gte: startOfMonth }
+            }
+        },
+        { $group: { _id: '$toUser', count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+    ]);
+
+    const userRank = userRankData.findIndex(e => e._id.toString() === currentUser._id.toString());
+    const userCount = userRank >= 0 ? userRankData[userRank].count : 0;
+
+    msg += `\n<i>Your Rank: ${userRank >= 0 ? `#${userRank + 1}` : 'Unranked'} (${userCount} this month)</i>`;
+
+    await ctx.reply(msg, { parse_mode: 'HTML' });
+}
+
+function maskUsername(username?: string, firstName?: string): string {
+    if (username && username.length > 0) {
+        const visible = username.slice(0, 3);
+        return `@${visible}*****`;
+    }
+    if (firstName && firstName.length > 0) {
+        const visible = firstName.slice(0, 3);
+        return `${visible}*****`;
+    }
+    return 'User*****';
+}

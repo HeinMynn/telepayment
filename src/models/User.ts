@@ -27,6 +27,9 @@ export interface IUser extends Document {
         reusable: number;
         month: string;
     };
+    // Referral
+    referrer?: mongoose.Types.ObjectId;
+    referralRewardClaimed?: boolean;
 }
 
 const UserSchema: Schema = new Schema({
@@ -53,7 +56,10 @@ const UserSchema: Schema = new Schema({
         oneTime: { type: Number, default: 0 },
         reusable: { type: Number, default: 0 },
         month: { type: String, default: '' }
-    }
+    },
+    // Referral
+    referrer: { type: Schema.Types.ObjectId, ref: 'User' },
+    referralRewardClaimed: { type: Boolean, default: false }
 }, { timestamps: true });
 
 export default mongoose.models.User || mongoose.model<IUser>('User', UserSchema);

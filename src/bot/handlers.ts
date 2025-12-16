@@ -59,6 +59,27 @@ bot.command('start', async (ctx) => {
             return handlePaymentStart(ctx, payload);
         }
     }
+
+    // Referral Attribution
+    if (payload && payload.startsWith('ref_')) {
+        console.log(`[Referral Debug] Payload: ${payload}`);
+        const refId = parseInt(payload.replace('ref_', ''));
+        console.log(`[Referral Debug] Parsed refId: ${refId}, user.telegramId: ${user.telegramId}, user.referrer: ${user.referrer}`);
+
+        if (!isNaN(refId) && refId !== user.telegramId && !user.referrer) {
+            // Find Referrer
+            const referrerUser = await User.findOne({ telegramId: refId });
+            console.log(`[Referral Debug] Found referrer: ${referrerUser ? referrerUser.telegramId : 'NOT FOUND'}`);
+
+            if (referrerUser) {
+                user.referrer = referrerUser._id;
+                await user.save();
+                console.log(`[Referral] User ${user.telegramId} referred by ${refId} - SAVED`);
+            }
+        } else {
+            console.log(`[Referral Debug] Skipped - isNaN:${isNaN(refId)}, self:${refId === user.telegramId}, hasReferrer:${!!user.referrer}`);
+        }
+    }
     if (!user.termsAccepted) {
         const keyboard = new InlineKeyboard().text(t(user.language as any, 'tos_agree'), 'accept_tos');
         await ctx.reply(t(user.language as any, 'welcome') + "\n\n" + t(user.language as any, 'tos_text'), { reply_markup: keyboard });
@@ -73,11 +94,6 @@ bot.command('start', async (ctx) => {
         const { getMainMenu } = await import('./menus');
         await ctx.reply(t(user.language as any, 'welcome'), { reply_markup: getMainMenu(user.role, user.language) });
     }
-});
-
-// Terms Acceptance
-bot.callbackQuery('accept_tos', async (ctx) => {
-    // ... logic
 });
 
 
@@ -143,6 +159,22 @@ bot.callbackQuery('explore_channels', async (ctx) => {
     await ctx.answerCallbackQuery();
 });
 
+// Invite / Referral
+bot.command('invite', async (ctx) => {
+    const user = ctx.user;
+    if (!ctx.me?.username) return;
+
+    const link = `https://t.me/${ctx.me.username}?start=ref_${user.telegramId}`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Join me on this awesome payment bot!')}`;
+
+    const { InlineKeyboard } = await import('grammy');
+    const kb = new InlineKeyboard().url('📤 Share with Friends', shareUrl);
+
+    await ctx.reply(`🎁 <b>Invite Friends & Earn!</b>\n\nShare this link. When a friend joins and makes their FIRST top-up, you earn <b>1%</b> of the amount!\n\n🔗 Your Link:\n<blockquote><code>${link}</code></blockquote>`, {
+        parse_mode: 'HTML',
+        reply_markup: kb
+    });
+});
 
 // Handle Renew (Callback)
 bot.on('callback_query:data', async (ctx, next) => {
@@ -189,9 +221,15 @@ bot.callbackQuery('accept_tos', async (ctx) => {
         }
     }
 
+    // Visual Onboarding for new users
+    try {
+        const { sendVisualOnboarding } = await import('./menuHandlers');
+        await sendVisualOnboarding(ctx);
+    } catch (e) { console.error("Onboarding Error", e); }
+
     // Send Main Menu
     const { getMainMenu } = await import('./menus');
-    await ctx.editMessageText(t(user.language as any, 'welcome')); // Edit previous message
+    await ctx.editMessageText(t(user.language as any, 'welcome') + "\n\n✅ Terms Accepted.");
     await ctx.reply("Main Menu:", { reply_markup: getMainMenu(user.role, user.language) });
 });
 
@@ -623,6 +661,46 @@ bot.callbackQuery(/^topup_approve_(.+)$/, async (ctx) => {
 
     await ctx.editMessageCaption({ caption: ctx.msg?.caption + "\n\n✅ APPROVED" });
     await ctx.api.sendMessage(targetUser.telegramId, `✅ Topup of ${tx.amount} approved! Balance updated.`);
+
+    // Referral Reward (1% on First Topup)
+    console.log(`[Referral Reward Debug] targetUser.referrer: ${targetUser.referrer}, referralRewardClaimed: ${targetUser.referralRewardClaimed}`);
+
+    if (targetUser.referrer && !targetUser.referralRewardClaimed) {
+        try {
+            const referrer = await User.findById(targetUser.referrer);
+            console.log(`[Referral Reward Debug] Referrer found: ${referrer ? referrer.telegramId : 'NOT FOUND'}`);
+
+            if (referrer) {
+                const bonus = Math.floor(tx.amount * 0.01);
+                console.log(`[Referral Reward Debug] Bonus calculated: ${bonus} (from ${tx.amount})`);
+
+                if (bonus > 0) {
+                    referrer.balance += bonus;
+                    targetUser.referralRewardClaimed = true;
+
+                    // Save Update
+                    await referrer.save();
+                    await targetUser.save();
+
+                    // Create Bonus Transaction
+                    await Transaction.create({
+                        toUser: referrer._id,
+                        amount: bonus,
+                        type: 'referral',
+                        status: 'completed'
+                    });
+
+                    // Notify
+                    await ctx.api.sendMessage(referrer.telegramId, `🎉 <b>Referral Bonus!</b>\n\nA friend you invited just made their first top-up!\nYou earned 1% (${bonus} MMK).`, { parse_mode: 'HTML' });
+                    console.log(`[Referral] Paid ${bonus} to ${referrer.telegramId} - SUCCESS`);
+                }
+            }
+        } catch (e) {
+            console.error("Referral Bonus Error:", e);
+        }
+    } else {
+        console.log(`[Referral Reward Debug] Skipped - hasReferrer: ${!!targetUser.referrer}, claimed: ${targetUser.referralRewardClaimed}`);
+    }
 });
 
 bot.callbackQuery(/^topup_reject_(.+)$/, async (ctx) => {

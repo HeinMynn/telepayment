@@ -31,6 +31,8 @@ export const en = {
     settings_btn: "⚙️ Settings",
     channel_plans_btn: "📺 Channel Plans",
     my_subs_btn: "📂 My Subscriptions",
+    invite_btn: "🎁 Invite Friends",
+    leaderboard_btn: "🏆 Leaderboard",
 
     // Logic Msgs
     no_subs: "You have no active subscriptions.",
