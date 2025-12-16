@@ -163,6 +163,53 @@ export async function handleMenuClick(ctx: BotContext) {
         return;
     }
 
+    // Activity Log
+    if (text === "📜 Activity Log") {
+        const { default: AuditLog } = await import('@/models/AuditLog');
+        const logs = await AuditLog.find({ userId: user._id }).sort({ createdAt: -1 }).limit(20);
+
+        if (logs.length === 0) {
+            await ctx.reply("📜 <b>Activity Log</b>\n\nNo activity recorded yet.", { parse_mode: 'HTML' });
+            return;
+        }
+
+        let msg = "📜 <b>Activity Log</b>\n\nRecent actions:\n";
+
+        const actionLabels: Record<string, string> = {
+            'plan_created': '➕ Created plan',
+            'plan_price_changed': '💰 Changed price',
+            'plan_toggled': '🔄 Toggled plan',
+            'channel_added': '📢 Added channel',
+            'channel_category_changed': '📁 Changed category',
+            'account_added': '💳 Added account',
+            'account_removed': '🗑 Removed account'
+        };
+
+        logs.forEach((log: any) => {
+            const date = new Date(log.createdAt).toLocaleDateString();
+            const time = new Date(log.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const label = actionLabels[log.action] || log.action;
+
+            let detail = '';
+            if (log.details) {
+                if (log.action === 'plan_price_changed') {
+                    detail = `: ${log.details.oldPrice?.toLocaleString()} → ${log.details.newPrice?.toLocaleString()} MMK`;
+                } else if (log.action === 'plan_toggled') {
+                    detail = `: ${log.details.isActive ? 'Enabled' : 'Disabled'}`;
+                } else if (log.action === 'channel_category_changed') {
+                    detail = `: ${log.details.oldCategory} → ${log.details.newCategory}`;
+                } else if (log.details.channelTitle || log.details.planName) {
+                    detail = `: ${log.details.channelTitle || log.details.planName}`;
+                }
+            }
+
+            msg += `\n<code>${date} ${time}</code> ${label}${detail}`;
+        });
+
+        await ctx.reply(msg, { parse_mode: 'HTML' });
+        return;
+    }
+
     // Back to Merchant
     if (text === t(l, 'back_merchant')) {
         await ctx.reply("Merchant Menu:", { reply_markup: getMerchantMenu(user.language) });

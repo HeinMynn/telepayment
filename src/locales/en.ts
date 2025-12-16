@@ -1,5 +1,5 @@
 export const en = {
-    welcome: "Welcome to TelePayments Bridge Bot.\n\nType /start to begin.",
+    welcome: "👋 Welcome to TelePayments!",
     tos_intro: "Before you proceed, you must accept our Terms of Service.",
     tos_text: "By using this bot, you acknowledge that we are a payment bridge only. We are NOT responsible for goods delivery, quality, or scams. All payments are final.",
     tos_agree: "✅ I Agree & Continue",
@@ -12,10 +12,10 @@ export const en = {
     pay_cancel: "❌ Cancel",
     pay_confirm: "💸 Yes, Secure Pay",
     payment_success: "✅ Payment Successful! Your funds are safe.",
-    payment_failed: "Payment Failed. Please try again.",
+    payment_failed: "❌ Payment failed. Please check your balance and try again.",
     insufficient_funds: "Insufficient funds.",
     account_frozen: "Your account is frozen.",
-    error_generic: "An error occurred.",
+    error_generic: "⚠️ Something went wrong. Please try again or contact support.",
 
     // Menus
     menu_balance: "💰 Balance", // Legacy?
@@ -35,21 +35,21 @@ export const en = {
     leaderboard_btn: "🏆 Leaderboard",
 
     // Logic Msgs
-    no_subs: "You have no active subscriptions.",
+    no_subs: "📭 No subscriptions yet. Explore channels to get started!",
     no_more_results: "No more results.",
     sub_history_title: "📂 My Subscriptions",
     sub_active: "Active",
     sub_expired: "Expired",
 
     // Balance
-    balance_text: "Your Balance: ${amount} MMK.",
+    balance_text: "💰 Your Balance: ${amount} MMK",
     withdraw_btn: "📤 Withdraw",
 
     // Topup
     topup_intro: "Top Up Rules:\nMinimum: 3,000 MMK.\nYour funds are held securely until verified.\n\nType /cancel to stop.",
     // topup_payment_info: DEPRECATED or used as fallback
     admin_kpay_info: "🏦 **Admin KBZ Pay**\nName: Mr. Admin\nAccount: 0912345678\n\nPlease transfer to this official account.",
-    admin_wave_info: "money_with_wings **Admin Wave Pay**\nName: Mr. Admin\nAccount: 0912345678\n\nPlease transfer to this official account.",
+    admin_wave_info: "💸 **Admin Wave Pay**\nName: Mr. Admin\nAccount: 0912345678\n\nPlease transfer to this official account.",
     enter_topup_amount: "Please enter transferred amount (MMK):",
     enter_proof: "Please upload the payment receipt (Photo).",
     topup_submitted: "✅ Receipt Received! Our team is verifying it securely...",
@@ -118,5 +118,16 @@ export const en = {
     how_to_use_btn: "❓ How to Use",
     onboard_cap_1: "1️⃣ **Top Up**: Add funds securely via KPay or Wave.",
     onboard_cap_2: "2️⃣ **Browse**: Choose from our premium channels.",
-    onboard_cap_3: "3️⃣ **Enjoy**: Get instant access link & enjoy content!"
+    onboard_cap_3: "3️⃣ **Enjoy**: Get instant access link & enjoy content!",
+
+    // Explore Categories
+    explore_title: "🔍 <b>Explore Channels</b>\n\nSelect a category:",
+    explore_no_channels: "No channels in this category yet.",
+    cat_entertainment: "🎬 Entertainment",
+    cat_education: "📚 Education",
+    cat_business: "💼 Business",
+    cat_gaming: "🎮 Gaming",
+    cat_lifestyle: "🌟 Lifestyle",
+    cat_other: "📦 Other",
+    cat_all: "📋 All Channels"
 };

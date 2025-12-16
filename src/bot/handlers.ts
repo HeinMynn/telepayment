@@ -84,15 +84,15 @@ bot.command('start', async (ctx) => {
         const keyboard = new InlineKeyboard().text(t(user.language as any, 'tos_agree'), 'accept_tos');
         await ctx.reply(t(user.language as any, 'welcome') + "\n\n" + t(user.language as any, 'tos_text'), { reply_markup: keyboard });
     } else {
-        // Visual Onboarding
+        // Send Welcome + Main Menu first
+        const { getMainMenu } = await import('./menus');
+        await ctx.reply(t(user.language as any, 'welcome'), { reply_markup: getMainMenu(user.role, user.language) });
+
+        // Then Visual Onboarding
         try {
             const { sendVisualOnboarding } = await import('./menuHandlers');
             await sendVisualOnboarding(ctx);
         } catch (e) { console.error("Onboarding Error", e); }
-
-        // Send Main Menu
-        const { getMainMenu } = await import('./menus');
-        await ctx.reply(t(user.language as any, 'welcome'), { reply_markup: getMainMenu(user.role, user.language) });
     }
 });
 
@@ -126,15 +126,41 @@ bot.callbackQuery(/^onboard_(.+)$/, async (ctx) => {
 });
 
 bot.callbackQuery('explore_channels', async (ctx) => {
-    // Show list of channels? Or random?
-    // Let's reuse logic from MerchantChannel fetch, but formatted for User browsing.
+    const { InlineKeyboard } = await import('grammy');
+    const { t } = await import('@/lib/i18n');
+    const l = ctx.user.language as any;
+
+    const kb = new InlineKeyboard()
+        .text(t(l, 'cat_entertainment'), 'explore_cat_entertainment').text(t(l, 'cat_education'), 'explore_cat_education').row()
+        .text(t(l, 'cat_business'), 'explore_cat_business').text(t(l, 'cat_gaming'), 'explore_cat_gaming').row()
+        .text(t(l, 'cat_lifestyle'), 'explore_cat_lifestyle').text(t(l, 'cat_other'), 'explore_cat_other').row()
+        .text(t(l, 'cat_all'), 'explore_cat_all');
+
+    await ctx.reply(t(l, 'explore_title'), { parse_mode: 'HTML', reply_markup: kb });
+    await ctx.answerCallbackQuery();
+});
+
+// Explore by Category (with pagination)
+bot.callbackQuery(/^explore_cat_(.+?)(?:_page_(\d+))?$/, async (ctx) => {
+    const category = ctx.match[1];
+    const page = parseInt(ctx.match[2] || '1');
+    const pageSize = 5;
+
     const { default: MerchantChannel } = await import('@/models/MerchantChannel');
     const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
     const { InlineKeyboard } = await import('grammy');
+    const { t } = await import('@/lib/i18n');
+    const l = ctx.user.language as any;
 
-    // Find channels with at least 1 active plan
-    // This is complex in Mongo without aggregation, but let's do simple:
-    const channels = await MerchantChannel.find({ isActive: true });
+    // Build query
+    const query: any = { isActive: true };
+    if (category !== 'all') {
+        query.category = category;
+    }
+
+    const channels = await MerchantChannel.find(query).skip((page - 1) * pageSize).limit(pageSize + 1); // +1 to check if more
+    const hasMore = channels.length > pageSize;
+    if (hasMore) channels.pop();
 
     // Filter by having plans
     const validChannels: any[] = [];
@@ -143,8 +169,9 @@ bot.callbackQuery('explore_channels', async (ctx) => {
         if (count > 0) validChannels.push(ch);
     }
 
-    if (validChannels.length === 0) {
-        return ctx.answerCallbackQuery("No channels available right now.");
+    if (validChannels.length === 0 && page === 1) {
+        await ctx.answerCallbackQuery({ text: t(l, 'explore_no_channels'), show_alert: true });
+        return;
     }
 
     const kb = new InlineKeyboard();
@@ -152,11 +179,33 @@ bot.callbackQuery('explore_channels', async (ctx) => {
         kb.text(`📢 ${ch.title}`, `ch_${ch._id}`).row();
     });
 
-    await ctx.reply("🔍 <b>Explore Channels</b>\nSelect a channel to view plans:", {
-        parse_mode: 'HTML',
-        reply_markup: kb
-    });
+    // Pagination
+    const navRow: any[] = [];
+    if (page > 1) navRow.push({ text: '◀️ Prev', callback_data: `explore_cat_${category}_page_${page - 1}` });
+    if (hasMore) navRow.push({ text: 'Next ▶️', callback_data: `explore_cat_${category}_page_${page + 1}` });
+    if (navRow.length > 0) kb.row(...navRow.map(b => kb.text(b.text, b.callback_data)));
+
+    kb.row().text('🔙 Categories', 'explore_channels');
+
+    const catLabel = category === 'all' ? t(l, 'cat_all') : t(l, `cat_${category}`);
+    const msg = `🔍 <b>${catLabel}</b>\n\nPage ${page}`;
+
+    if (ctx.callbackQuery?.message) {
+        try {
+            await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb });
+        } catch (e) { }
+    } else {
+        await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+    }
     await ctx.answerCallbackQuery();
+});
+
+// User selects channel from explore list
+bot.callbackQuery(/^ch_(.+)$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    const { handleChannelStart } = await import('./subscriptionHandlers');
+    await ctx.answerCallbackQuery();
+    await handleChannelStart(ctx, `ch_${channelId}`);
 });
 
 // Invite / Referral
@@ -399,6 +448,236 @@ bot.callbackQuery('add_channel', async (ctx) => {
     await ctx.reply(t(ctx.user.language as any, 'channel_add_prompt'), { reply_markup: getCancelKeyboard(ctx.user.language) });
 });
 
+// Channel Category Selection (after channel verification)
+bot.callbackQuery(/^ch_cat_(.+)$/, async (ctx) => {
+    const category = ctx.match[1] as any;
+    const user = ctx.user;
+
+    if (user.interactionState !== 'awaiting_channel_category' || !user.tempData) {
+        return ctx.answerCallbackQuery({ text: "Session expired. Please try again." });
+    }
+
+    const { channelId, title, username } = user.tempData;
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+    const { getMerchantMenu } = await import('./menus');
+    const { t } = await import('@/lib/i18n');
+    const l = user.language as any;
+
+    // Save to DB with category
+    const savedChannel = await MerchantChannel.findOneAndUpdate(
+        { merchantId: user._id, channelId: channelId },
+        {
+            merchantId: user._id,
+            channelId: channelId,
+            title: title,
+            username: username,
+            isActive: true,
+            category: category
+        },
+        { upsert: true, new: true }
+    );
+
+    // Audit Log
+    const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
+    await logAudit(user._id, AUDIT_ACTIONS.CHANNEL_ADDED, 'channel', String(savedChannel._id), {
+        channelTitle: title,
+        category
+    });
+
+    user.interactionState = 'idle';
+    user.tempData = undefined;
+    await user.save();
+
+    await ctx.answerCallbackQuery({ text: "Channel added!" });
+    await ctx.editMessageText(`✅ Channel "<b>${title}</b>" added to <b>${t(l, `cat_${category}`)}</b>!`, { parse_mode: 'HTML' });
+    await ctx.reply("Merchant Menu:", { reply_markup: getMerchantMenu(user.language) });
+});
+
+// Edit Channel Category - Show category selection
+bot.callbackQuery(/^edit_ch_cat_(.+)$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    const { InlineKeyboard } = await import('grammy');
+    const { t } = await import('@/lib/i18n');
+    const l = ctx.user.language as any;
+
+    const kb = new InlineKeyboard()
+        .text(t(l, 'cat_entertainment'), `update_ch_cat_${channelId}_entertainment`)
+        .text(t(l, 'cat_education'), `update_ch_cat_${channelId}_education`).row()
+        .text(t(l, 'cat_business'), `update_ch_cat_${channelId}_business`)
+        .text(t(l, 'cat_gaming'), `update_ch_cat_${channelId}_gaming`).row()
+        .text(t(l, 'cat_lifestyle'), `update_ch_cat_${channelId}_lifestyle`)
+        .text(t(l, 'cat_other'), `update_ch_cat_${channelId}_other`).row()
+        .text("🔙 Cancel", `manage_ch_${channelId}`);
+
+    await ctx.editMessageText("Select a new category:", { reply_markup: kb });
+    await ctx.answerCallbackQuery();
+});
+
+// Update Channel Category - Save new category
+bot.callbackQuery(/^update_ch_cat_(.+)_(.+)$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    const category = ctx.match[2];
+
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+    const { t } = await import('@/lib/i18n');
+    const l = ctx.user.language as any;
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.answerCallbackQuery({ text: "Channel not found." });
+    if (String(ch.merchantId) !== String(ctx.user._id)) return ctx.answerCallbackQuery({ text: "Not your channel." });
+
+    const oldCategory = ch.category || 'other';
+    ch.category = category as any;
+    await ch.save();
+
+    // Audit Log
+    const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
+    await logAudit(ctx.user._id, AUDIT_ACTIONS.CHANNEL_CATEGORY_CHANGED, 'channel', channelId, {
+        channelTitle: ch.title,
+        oldCategory,
+        newCategory: category
+    });
+
+    await ctx.answerCallbackQuery({ text: "Category updated!" });
+
+    // Redirect back to channel details
+    const { handleChannelDetails } = await import('./subscriptionHandlers');
+    try { await ctx.deleteMessage(); } catch (e) { }
+    await handleChannelDetails(ctx, channelId);
+});
+
+// Manage Plans - Show list of all plans
+bot.callbackQuery(/^manage_plans_(.+)$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+    const { InlineKeyboard } = await import('grammy');
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.answerCallbackQuery({ text: "Channel not found." });
+    if (String(ch.merchantId) !== String(ctx.user._id)) return ctx.answerCallbackQuery({ text: "Not your channel." });
+
+    const plans = await SubscriptionPlan.find({ channelId: ch._id });
+
+    if (plans.length === 0) {
+        return ctx.answerCallbackQuery({ text: "No plans to manage. Add a plan first.", show_alert: true });
+    }
+
+    let msg = `📋 <b>Manage Plans - ${ch.title}</b>\n\nSelect a plan to edit:\n`;
+    const kb = new InlineKeyboard();
+
+    plans.forEach((p: any) => {
+        const status = p.isActive ? '✅' : '❌';
+        const name = p.name || `${p.durationMonths} Month(s)`;
+        msg += `\n${status} ${name} - ${p.price.toLocaleString()} MMK`;
+        kb.text(`${status} ${name}`, `edit_plan_${p._id}`).row();
+    });
+
+    kb.text("🔙 Back", `manage_ch_${channelId}`);
+
+    await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb });
+    await ctx.answerCallbackQuery();
+});
+
+// Edit Plan - Show options
+bot.callbackQuery(/^edit_plan_(.+)$/, async (ctx) => {
+    const planId = ctx.match[1];
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+    const { InlineKeyboard } = await import('grammy');
+
+    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+    if (!plan) return ctx.answerCallbackQuery({ text: "Plan not found." });
+
+    const ch = plan.channelId as any;
+    if (String(ch.merchantId) !== String(ctx.user._id)) return ctx.answerCallbackQuery({ text: "Not your plan." });
+
+    const name = (plan as any).name || `${plan.durationMonths} Month(s)`;
+    const status = plan.isActive ? '✅ Active' : '❌ Inactive';
+
+    const msg = `✏️ <b>Edit Plan</b>\n\n` +
+        `<b>Plan:</b> ${name}\n` +
+        `<b>Duration:</b> ${plan.durationMonths} month(s)\n` +
+        `<b>Price:</b> ${plan.price.toLocaleString()} MMK\n` +
+        `<b>Status:</b> ${status}`;
+
+    const kb = new InlineKeyboard()
+        .text("💰 Edit Price", `edit_plan_price_${planId}`).row()
+        .text(plan.isActive ? "❌ Disable Plan" : "✅ Enable Plan", `toggle_plan_${planId}`).row()
+        .text("🔙 Back", `manage_plans_${ch._id}`);
+
+    await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb });
+    await ctx.answerCallbackQuery();
+});
+
+// Toggle Plan Active/Inactive
+bot.callbackQuery(/^toggle_plan_(.+)$/, async (ctx) => {
+    const planId = ctx.match[1];
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+
+    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+    if (!plan) return ctx.answerCallbackQuery({ text: "Plan not found." });
+
+    const ch = plan.channelId as any;
+    if (String(ch.merchantId) !== String(ctx.user._id)) return ctx.answerCallbackQuery({ text: "Not your plan." });
+
+    const wasActive = plan.isActive;
+    plan.isActive = !plan.isActive;
+    await plan.save();
+
+    // Audit Log
+    const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
+    await logAudit(ctx.user._id, AUDIT_ACTIONS.PLAN_TOGGLED, 'plan', planId, {
+        planName: (plan as any).name || `${plan.durationMonths} Month(s)`,
+        channelTitle: ch.title,
+        wasActive,
+        isActive: plan.isActive
+    });
+
+    await ctx.answerCallbackQuery({ text: plan.isActive ? "Plan enabled!" : "Plan disabled!" });
+
+    // Refresh edit view
+    const { InlineKeyboard } = await import('grammy');
+    const name = (plan as any).name || `${plan.durationMonths} Month(s)`;
+    const status = plan.isActive ? '✅ Active' : '❌ Inactive';
+
+    const msg = `✏️ <b>Edit Plan</b>\n\n` +
+        `<b>Plan:</b> ${name}\n` +
+        `<b>Duration:</b> ${plan.durationMonths} month(s)\n` +
+        `<b>Price:</b> ${plan.price.toLocaleString()} MMK\n` +
+        `<b>Status:</b> ${status}`;
+
+    const kb = new InlineKeyboard()
+        .text("💰 Edit Price", `edit_plan_price_${planId}`).row()
+        .text(plan.isActive ? "❌ Disable Plan" : "✅ Enable Plan", `toggle_plan_${planId}`).row()
+        .text("🔙 Back", `manage_plans_${ch._id}`);
+
+    await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb });
+});
+
+// Edit Plan Price - Prompt
+bot.callbackQuery(/^edit_plan_price_(.+)$/, async (ctx) => {
+    const planId = ctx.match[1];
+    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+
+    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+    if (!plan) return ctx.answerCallbackQuery({ text: "Plan not found." });
+
+    const ch = plan.channelId as any;
+    if (String(ch.merchantId) !== String(ctx.user._id)) return ctx.answerCallbackQuery({ text: "Not your plan." });
+
+    ctx.user.interactionState = 'awaiting_plan_new_price';
+    ctx.user.tempData = { editPlanId: planId, channelId: ch._id };
+    await ctx.user.save();
+
+    await ctx.answerCallbackQuery();
+    await ctx.reply(`Current price: ${plan.price.toLocaleString()} MMK\n\nEnter new price (MMK):`, {
+        reply_markup: { force_reply: true }
+    });
+});
+
 bot.callbackQuery('admin_channels_back', async (ctx) => {
     const { handleManageChannels } = await import('./subscriptionHandlers');
     await ctx.answerCallbackQuery();
@@ -506,6 +785,9 @@ bot.on('callback_query:data', async (ctx, next) => {
 
 // Admin Withdrawal Actions
 bot.callbackQuery(/^withdraw_complete_(.+)$/, async (ctx) => {
+    // Admin check
+    if (ctx.user.role !== 'admin') return ctx.answerCallbackQuery({ text: "Not authorized." });
+
     const txId = ctx.match[1];
     const { default: Transaction } = await import('@/models/Transaction');
     const { default: User } = await import('@/models/User');
@@ -553,6 +835,9 @@ bot.callbackQuery(/^withdraw_complete_(.+)$/, async (ctx) => {
 });
 
 bot.callbackQuery(/^withdraw_reject_(.+)$/, async (ctx) => {
+    // Admin check
+    if (ctx.user.role !== 'admin') return ctx.answerCallbackQuery({ text: "Not authorized." });
+
     const txId = ctx.match[1];
     // Ask for Reason
     ctx.user.interactionState = 'awaiting_withdraw_reject_reason';
@@ -630,6 +915,9 @@ bot.callbackQuery('withdraw_start', async (ctx) => {
 
 // Admin Callbacks
 bot.callbackQuery(/^topup_approve_(.+)$/, async (ctx) => {
+    // Admin check
+    if (ctx.user.role !== 'admin') return ctx.answerCallbackQuery({ text: "Not authorized." });
+
     const txId = ctx.match[1];
     const user = ctx.user; // Admin
 
@@ -704,6 +992,9 @@ bot.callbackQuery(/^topup_approve_(.+)$/, async (ctx) => {
 });
 
 bot.callbackQuery(/^topup_reject_(.+)$/, async (ctx) => {
+    // Admin check
+    if (ctx.user.role !== 'admin') return ctx.answerCallbackQuery({ text: "Not authorized." });
+
     const txId = ctx.match[1];
 
     // Set State for Reason
@@ -969,11 +1260,17 @@ bot.callbackQuery('back_to_settings_refresh', async (ctx) => {
 });
 
 bot.callbackQuery(/^admin_unfreeze_(.+)$/, async (ctx) => {
+    // Admin check
+    if (ctx.user.role !== 'admin') return ctx.answerCallbackQuery({ text: "Not authorized." });
+
     const { handleUnfreezeUser } = await import('./adminHandlers');
     await handleUnfreezeUser(ctx, ctx.match[1]);
 });
 
 bot.callbackQuery(/^admin_freeze_(.+)$/, async (ctx) => {
+    // Admin check
+    if (ctx.user.role !== 'admin') return ctx.answerCallbackQuery({ text: "Not authorized." });
+
     const { handleFreezeUser } = await import('./adminHandlers');
     await handleFreezeUser(ctx, ctx.match[1]);
 });

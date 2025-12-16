@@ -187,6 +187,13 @@ export async function handleState(ctx: BotContext) {
                 accountNumber: number
             });
 
+            // Audit Log
+            const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
+            await logAudit(user._id, AUDIT_ACTIONS.ACCOUNT_ADDED, 'account', number, {
+                provider: provider === 'KBZ Pay' ? 'kpay' : 'wavepay',
+                accountNumber: number.slice(-4) // Only log last 4 digits for privacy
+            });
+
             // Also update `paymentAccount` string for backward compatibility IF it exists?
             // I'll check if I can set `user.paymentAccount` (any).
             // Actually, if I use `paymentMethods`, I should prompt user to PICK one during withdraw?
@@ -630,6 +637,72 @@ export async function handleState(ctx: BotContext) {
             return;
         }
 
+        // Edit Plan Price
+        if (state === 'awaiting_plan_new_price') {
+            if (!text || !user.tempData?.editPlanId) {
+                await ctx.reply("Session expired. Please try again.");
+                user.interactionState = 'idle';
+                await user.save();
+                return;
+            }
+
+            const newPrice = parseInt(text.replace(/,/g, ''));
+            if (isNaN(newPrice) || newPrice < 1000) {
+                await ctx.reply("Invalid price. Minimum is 1,000 MMK. Try again:");
+                return;
+            }
+
+            const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+            const plan = await SubscriptionPlan.findById(user.tempData.editPlanId);
+            if (!plan) {
+                await ctx.reply("Plan not found.");
+                user.interactionState = 'idle';
+                await user.save();
+                return;
+            }
+
+            const oldPrice = plan.price;
+            plan.price = newPrice;
+            await plan.save();
+
+            // Audit Log
+            const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
+            await logAudit(user._id, AUDIT_ACTIONS.PLAN_PRICE_CHANGED, 'plan', String(plan._id), {
+                planName: (plan as any).name || `${plan.durationMonths} Month(s)`,
+                oldPrice,
+                newPrice
+            });
+
+            user.interactionState = 'idle';
+            const channelId = user.tempData.channelId;
+            user.tempData = undefined;
+            await user.save();
+
+            await ctx.reply(`✅ Price updated to ${newPrice.toLocaleString()} MMK!`);
+
+            // Redirect back to plan list
+            const { InlineKeyboard } = await import('grammy');
+            const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+            const plans = await SubscriptionPlan.find({ channelId });
+            const ch = await MerchantChannel.findById(channelId);
+
+            if (ch && plans.length > 0) {
+                let msg = `📋 <b>Manage Plans - ${ch.title}</b>\n\nSelect a plan to edit:\n`;
+                const kb = new InlineKeyboard();
+
+                plans.forEach((p: any) => {
+                    const status = p.isActive ? '✅' : '❌';
+                    const name = p.name || `${p.durationMonths} Month(s)`;
+                    msg += `\n${status} ${name} - ${p.price.toLocaleString()} MMK`;
+                    kb.text(`${status} ${name}`, `edit_plan_${p._id}`).row();
+                });
+
+                kb.text("🔙 Back", `manage_ch_${channelId}`);
+                await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+            }
+            return;
+        }
+
         // Add Channel Flow
         if (state === 'awaiting_channel_username') {
             let channelId: number | undefined;
@@ -682,24 +755,18 @@ export async function handleState(ctx: BotContext) {
                 return;
             }
 
-            // Save to DB
-            const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-            // Upsert (activate if exists)
-            await MerchantChannel.findOneAndUpdate(
-                { merchantId: user._id, channelId: channelId },
-                {
-                    merchantId: user._id,
-                    channelId: channelId,
-                    title: title,
-                    username: username,
-                    isActive: true
-                },
-                { upsert: true, new: true }
-            );
-
-            user.interactionState = 'idle';
+            // Store in tempData and ask for category
+            user.tempData = { channelId, title, username };
+            user.interactionState = 'awaiting_channel_category';
             await user.save();
-            await ctx.reply(t(l, 'channel_add_success').replace('{title}', title || 'Channel'), { reply_markup: getMerchantMenu(user.language) });
+
+            const { InlineKeyboard } = await import('grammy');
+            const kb = new InlineKeyboard()
+                .text(t(l, 'cat_entertainment'), 'ch_cat_entertainment').text(t(l, 'cat_education'), 'ch_cat_education').row()
+                .text(t(l, 'cat_business'), 'ch_cat_business').text(t(l, 'cat_gaming'), 'ch_cat_gaming').row()
+                .text(t(l, 'cat_lifestyle'), 'ch_cat_lifestyle').text(t(l, 'cat_other'), 'ch_cat_other');
+
+            await ctx.reply(`✅ Channel "<b>${title}</b>" verified!\n\nSelect a category:`, { parse_mode: 'HTML', reply_markup: kb });
             return;
         }
 

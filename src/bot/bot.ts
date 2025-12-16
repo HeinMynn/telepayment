@@ -1,5 +1,6 @@
 import { Bot } from 'grammy';
 import { BotContext } from './types';
+import { rateLimitMiddleware } from './rateLimit';
 import { authMiddleware } from './middleware';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -11,6 +12,7 @@ if (!token) {
 export const bot = new Bot<BotContext>(token);
 
 // Attach Middleware
+bot.use(rateLimitMiddleware); // Rate limit first
 bot.use(authMiddleware);
 
 // Error handling

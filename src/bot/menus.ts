@@ -23,7 +23,7 @@ export function getMerchantMenu(lang: string = 'en') {
         .text(t(l, 'balance_btn')).row()
         .text(t(l, 'merchant_menu_invoice')).text(t(l, 'merchant_menu_report')).row()
         .text(t(l, 'merchant_menu_channels')).row() // Add Channels
-        .text(t(l, 'merchant_menu_edit_name')).row()
+        .text(t(l, 'merchant_menu_edit_name')).text("📜 Activity Log").row()
         .text(t(l, 'switch_to_user'))
         .resized();
 }

@@ -257,7 +257,13 @@ export async function handleChannelDetails(ctx: BotContext, channelId: string) {
 
     const kb = new InlineKeyboard()
         .text(t(l, 'plan_add_btn'), `add_plan_${ch._id}`).row()
+        .text("📋 Manage Plans", `manage_plans_${ch._id}`).row()
+        .text("✏️ Edit Category", `edit_ch_cat_${ch._id}`).row()
         .text("🔙 Back", `admin_channels_back`);
+
+    // Add category to message
+    const catKey = `cat_${ch.category || 'other'}`;
+    msg += `\n📁 <b>Category:</b> ${t(l, catKey)}`;
 
     await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
 }

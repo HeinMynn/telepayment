@@ -6,6 +6,7 @@ export interface IMerchantChannel extends Document {
     title: string;
     username?: string;
     isActive: boolean;
+    category: 'entertainment' | 'education' | 'business' | 'gaming' | 'lifestyle' | 'other';
 }
 
 const MerchantChannelSchema = new Schema({
@@ -13,7 +14,8 @@ const MerchantChannelSchema = new Schema({
     channelId: { type: Number, required: true },
     title: { type: String, required: true },
     username: { type: String },
-    isActive: { type: Boolean, default: true }
+    isActive: { type: Boolean, default: true },
+    category: { type: String, enum: ['entertainment', 'education', 'business', 'gaming', 'lifestyle', 'other'], default: 'other' }
 }, { timestamps: true });
 
 // Composite index to ensure a merchant doesn't add same channel twice
