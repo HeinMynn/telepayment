@@ -192,12 +192,7 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
 }
 
 export async function handleManageChannels(ctx: BotContext, page: number = 1) {
-  const startTime = Date.now();
-  console.log('[ManageChannels] Starting...');
-
-  const importStart = Date.now();
   const { default: MerchantChannel } = await import("@/models/MerchantChannel");
-  console.log(`[ManageChannels] Import took ${Date.now() - importStart}ms`);
 
   const user = ctx.user;
   const l = user.language as any;
@@ -206,64 +201,13 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
     const PAGE_SIZE = 5;
     const skip = (page - 1) * PAGE_SIZE;
 
-    // Single roundtrip: paginate + total count + plan counts
-    const queryStart = Date.now();
-    console.log(`[ManageChannels] Starting query for merchantId: ${user._id}`);
-    const [result] = await MerchantChannel.aggregate([
-      { $match: { merchantId: user._id, isActive: true } },
-      {
-        $facet: {
-          total: [{ $count: "count" }],
-          channels: [
-            { $sort: { createdAt: -1, _id: 1 } },
-            { $skip: skip },
-            { $limit: PAGE_SIZE },
-            {
-              $lookup: {
-                from: "subscriptionplans",
-                let: { chId: "$_id" },
-                pipeline: [
-                  {
-                    $match: {
-                      $expr: {
-                        $and: [
-                          { $eq: ["$channelId", "$$chId"] },
-                          { $eq: ["$isActive", true] },
-                        ],
-                      },
-                    },
-                  },
-                  { $count: "count" },
-                ],
-                as: "planStats",
-              },
-            },
-            {
-              $addFields: {
-                planCount: {
-                  $ifNull: [{ $arrayElemAt: ["$planStats.count", 0] }, 0],
-                },
-              },
-            },
-            { $project: { title: 1, planCount: 1 } },
-          ],
-        },
-      },
-      {
-        $project: {
-          totalCount: { $ifNull: [{ $arrayElemAt: ["$total.count", 0] }, 0] },
-          channels: 1,
-        },
-      },
-    ]);
-    console.log(`[ManageChannels] Query completed in ${Date.now() - queryStart}ms`);
-
-    const totalCount = result?.totalCount ?? 0;
-    const channels = result?.channels ?? [];
+    // Simple query to get channels
+    const filter = { merchantId: user._id, isActive: true };
+    const totalCount = await MerchantChannel.countDocuments(filter);
     const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
     // If a stale page is requested after channels were removed, jump to the last page.
-    if (channels.length === 0 && totalCount > 0 && page > totalPages) {
+    if (page > totalPages && totalCount > 0) {
       return handleManageChannels(ctx, totalPages);
     }
 
@@ -282,14 +226,20 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
       return;
     }
 
+    const channels = await MerchantChannel.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(PAGE_SIZE)
+      .select('title');
+
     // Guard against stale page numbers
     const safePage = Math.min(Math.max(page, 1), totalPages);
 
-    let msg = `<b>📢 Your Channels (Page ${safePage}/${totalPages})</b>\nSelect a channel to manage plans:\n`;
+    let msg = `<b>📢 Your Channels (Page ${safePage}/${totalPages})</b>\nSelect a channel to manage:\n`;
 
     const kb = new InlineKeyboard();
     for (const ch of channels) {
-      msg += `\n• <b>${ch.title}</b> (${ch.planCount} Plans)`;
+      msg += `\n• <b>${ch.title}</b>`;
       kb.text(ch.title, `manage_ch_${ch._id}`).row();
     }
 
@@ -317,34 +267,19 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
       } catch (err: any) {
         if (err?.description?.includes("message is not modified")) {
           await ctx.answerCallbackQuery({ text: "Up to date" });
-          console.log(`[ManageChannels] Total time: ${Date.now() - startTime}ms (no change)`);
           return;
         }
-        // If message can't be edited (deleted/too old), send new message instead
-        if (err?.description?.includes("message to edit not found")) {
-          console.log('[ManageChannels] Message not found, sending new reply');
-          await ctx.reply(msg, { parse_mode: "HTML", reply_markup: kb });
-        } else {
-          throw err;
-        }
+        throw err;
       }
     } else {
       await ctx.reply(msg, { parse_mode: "HTML", reply_markup: kb });
     }
-    console.log(`[ManageChannels] Total time: ${Date.now() - startTime}ms`);
-  } catch (error: any) {
+  } catch (error) {
     console.error("Manage Channels Error:", error);
-    console.log(`[ManageChannels] Total time: ${Date.now() - startTime}ms (error)`);
     const fallback = "❌ Error loading channels.";
-    // Use reply as safe fallback - editMessageText may fail if message doesn't exist
-    try {
-      if (ctx.callbackQuery && !error?.description?.includes("message to edit not found")) {
-        await ctx.editMessageText(fallback);
-      } else {
-        await ctx.reply(fallback);
-      }
-    } catch {
-      // Last resort: just reply
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(fallback);
+    } else {
       await ctx.reply(fallback);
     }
   }

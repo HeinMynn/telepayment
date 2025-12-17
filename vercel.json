@@ -1,10 +1,4 @@
 {
-    "functions": {
-        "src/app/api/**/*.ts": {
-            "includeFiles": "assets/**",
-            "maxDuration": 60
-        }
-    },
     "crons": [
         {
             "path": "/api/cron/check-subscriptions",
