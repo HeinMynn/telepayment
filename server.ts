@@ -4,9 +4,6 @@ import { bot } from './src/bot/bot';
 import dbConnect from './src/lib/db';
 import { runSubscriptionCron } from './src/cron';
 
-// Import handlers (side-effect: registers all bot handlers)
-import './src/bot/handlers';
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -15,7 +12,7 @@ app.use(express.json());
 
 // Health check endpoint
 app.get('/', (req, res) => {
-    res.json({ status: 'ok', bot: bot.botInfo?.username || 'not initialized' });
+    res.json({ status: 'ok', bot: (bot.botInfo as any)?.username || 'not initialized' });
 });
 
 app.get('/health', (req, res) => {
@@ -25,6 +22,13 @@ app.get('/health', (req, res) => {
 // Telegram webhook endpoint
 app.post('/webhook', async (req, res) => {
     try {
+        // Verify webhook secret token
+        const secret = req.headers['x-telegram-bot-api-secret-token'];
+        if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+            console.log('[Webhook] Unauthorized - invalid secret token');
+            return res.sendStatus(403);
+        }
+
         const body = req.body;
         console.log(`[Webhook] UpdateID=${body.update_id} Keys=${Object.keys(body).join(',')}`);
 
@@ -52,11 +56,15 @@ async function start() {
     await dbConnect();
     console.log('[Server] MongoDB connected.');
 
-    // Initialize bot
-    if (!bot.botInfo) {
-        await bot.init();
-    }
-    console.log(`[Server] Bot ready: @${(bot.botInfo as any)?.username || 'unknown'}`);
+    // Initialize bot FIRST (before importing handlers)
+    console.log('[Server] Initializing bot...');
+    await bot.init();
+    console.log(`[Server] Bot ready: @${bot.botInfo.username}`);
+
+    // Import handlers AFTER bot is initialized
+    console.log('[Server] Loading handlers...');
+    await import('./src/bot/handlers');
+    console.log('[Server] Handlers loaded.');
 
     // Schedule cron job (runs daily at midnight UTC)
     cron.schedule('0 0 * * *', async () => {
