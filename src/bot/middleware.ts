@@ -2,6 +2,7 @@ import { NextFunction } from 'grammy';
 import { BotContext } from './types';
 import User from '@/models/User';
 import { t, isValidLanguage } from '@/lib/i18n';
+import { handleState } from './stateHandler';
 
 export async function authMiddleware(ctx: BotContext, next: NextFunction) {
     if (!ctx.from) return next();
@@ -113,9 +114,6 @@ export async function authMiddleware(ctx: BotContext, next: NextFunction) {
     // State Routing
     // Only route MESSAGES to state handler. Callbacks should flow to listeners.
     if (user.interactionState && user.interactionState !== 'idle' && ctx.message) {
-        // Dynamic import to avoid circular dependency if stateHandler imports types that might import middleware? 
-        // Actually imports are fine: stateHandler -> types. middleware -> types.
-        const { handleState } = await import('./stateHandler');
         await handleState(ctx);
         return;
     }

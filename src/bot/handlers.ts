@@ -9,15 +9,26 @@ import Transaction from '@/models/Transaction';
 import { InlineKeyboard } from 'grammy';
 import { handlePaymentStart, initPaymentHandlers } from './payment';
 
-// Initialize payment listeners
-initPaymentHandlers();
+// Static imports for performance (previously dynamic)
+import MerchantChannel from '@/models/MerchantChannel';
+import SubscriptionPlan from '@/models/SubscriptionPlan';
+import Subscription from '@/models/Subscription';
+import Invoice from '@/models/Invoice';
+import { logAudit, AUDIT_ACTIONS } from '@/lib/auditLog';
+import { getMainMenu, getMerchantMenu, getInvoiceMenu, getCancelKeyboard, getProviderKeyboard, getPaginationKeyboard } from './menus';
+import { handleMenuClick, showHistory, showSettings, startTopupflow, sendVisualOnboarding, handleOnboardingCallback } from './menuHandlers';
+import { showUserSubscriptions, handleManageChannels, handleChannelDetails, handleChannelStart, handleSubscriptionStart, handleBuySubscription } from './subscriptionHandlers';
+import { showInvoices } from './invoiceHandlers';
+import { handleAdminCommand, handleAdminStats, handleAdminBroadcast, handleAdminUsers, handleUnfreezeUser, handleFreezeUser, handleFindUserPrompt } from './adminHandlers';
+import { handleBuyPlan, handleConfirmSub } from './subscription';
+import { handleInlineQuery } from './inline';
+import mongoose from 'mongoose';
 
 // Initialize payment listeners
 initPaymentHandlers();
 
 // Register Subscription Buying Callback
 bot.callbackQuery(/^buy_sub_(.+)$/, async (ctx) => {
-    const { handleBuySubscription } = await import('./subscriptionHandlers');
     await handleBuySubscription(ctx, ctx.match[1]);
 });
 
@@ -50,10 +61,8 @@ bot.command('start', async (ctx) => {
             await user.save();
             // Fall through to ToS check
         } else if (payload.startsWith('ch_')) {
-            const { handleChannelStart } = await import('./subscriptionHandlers');
             return handleChannelStart(ctx, payload);
         } else if (payload.startsWith('sub_')) {
-            const { handleSubscriptionStart } = await import('./subscriptionHandlers');
             return handleSubscriptionStart(ctx, payload);
         } else {
             return handlePaymentStart(ctx, payload);
@@ -85,12 +94,10 @@ bot.command('start', async (ctx) => {
         await ctx.reply(t(user.language as any, 'welcome') + "\n\n" + t(user.language as any, 'tos_text'), { reply_markup: keyboard });
     } else {
         // Send Welcome + Main Menu first
-        const { getMainMenu } = await import('./menus');
         await ctx.reply(t(user.language as any, 'welcome'), { reply_markup: getMainMenu(user.role, user.language) });
 
         // Then Visual Onboarding
         try {
-            const { sendVisualOnboarding } = await import('./menuHandlers');
             await sendVisualOnboarding(ctx);
         } catch (e) { console.error("Onboarding Error", e); }
     }
@@ -103,7 +110,6 @@ bot.callbackQuery('cancel_topup_upload', async (ctx) => {
     user.tempData = undefined;
     await user.save();
 
-    const { getMainMenu } = await import('./menus');
     await ctx.answerCallbackQuery("Cancelled.");
     try {
         await ctx.editMessageText("Upload cancelled.");
@@ -114,20 +120,16 @@ bot.callbackQuery('cancel_topup_upload', async (ctx) => {
 
 bot.callbackQuery(/^mysubs_(\d+)$/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
-    const { showUserSubscriptions } = await import('./subscriptionHandlers');
     await showUserSubscriptions(ctx, page);
 });
 
 // Onboarding Carousel
 bot.callbackQuery(/^onboard_(.+)$/, async (ctx) => {
     const step = ctx.match[1];
-    const { handleOnboardingCallback } = await import('./menuHandlers');
     await handleOnboardingCallback(ctx, step);
 });
 
 bot.callbackQuery('explore_channels', async (ctx) => {
-    const { InlineKeyboard } = await import('grammy');
-    const { t } = await import('@/lib/i18n');
     const l = ctx.user.language as any;
 
     const kb = new InlineKeyboard()
@@ -146,10 +148,6 @@ bot.callbackQuery(/^explore_cat_(.+?)(?:_page_(\d+))?$/, async (ctx) => {
     const page = parseInt(ctx.match[2] || '1');
     const pageSize = 5;
 
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { InlineKeyboard } = await import('grammy');
-    const { t } = await import('@/lib/i18n');
     const l = ctx.user.language as any;
 
     // Build query
@@ -202,7 +200,6 @@ bot.callbackQuery(/^explore_cat_(.+?)(?:_page_(\d+))?$/, async (ctx) => {
 // User selects channel from explore list
 bot.callbackQuery(/^ch_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
-    const { handleChannelStart } = await import('./subscriptionHandlers');
     await ctx.answerCallbackQuery();
     await handleChannelStart(ctx, `ch_${channelId}`);
 });
@@ -215,7 +212,6 @@ bot.command('invite', async (ctx) => {
     const link = `https://t.me/${ctx.me.username}?start=ref_${user.telegramId}`;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Join me on this awesome payment bot!')}`;
 
-    const { InlineKeyboard } = await import('grammy');
     const kb = new InlineKeyboard().url('📤 Share with Friends', shareUrl);
 
     await ctx.reply(`🎁 <b>Invite Friends & Earn!</b>\n\nShare this link. When a friend joins and makes their FIRST top-up, you earn <b>1%</b> of the amount!\n\n🔗 Your Link:\n<blockquote><code>${link}</code></blockquote>`, {
@@ -227,7 +223,6 @@ bot.command('invite', async (ctx) => {
 // Handle Renew (Callback)
 bot.on('callback_query:data', async (ctx, next) => {
     if (ctx.callbackQuery.data.startsWith('renew_sub_')) {
-        const { handleChannelStart } = await import('./subscriptionHandlers');
         // adapt renew_sub_CHANNELID -> ch_CHANNELID
         const payload = ctx.callbackQuery.data.replace('renew_sub_', 'ch_');
         return handleChannelStart(ctx, payload);
@@ -258,25 +253,20 @@ bot.callbackQuery('accept_tos', async (ctx) => {
         await ctx.editMessageText(t(user.language as any, 'welcome') + "\n\n✅ Terms Accepted.");
 
         if (payload.startsWith('ch_')) {
-            const { handleChannelStart } = await import('./subscriptionHandlers');
             return handleChannelStart(ctx, payload);
         } else if (payload.startsWith('sub_')) {
-            const { handleSubscriptionStart } = await import('./subscriptionHandlers');
             return handleSubscriptionStart(ctx, payload);
         } else {
-            const { handlePaymentStart } = await import('./payment');
             return handlePaymentStart(ctx, payload);
         }
     }
 
     // Visual Onboarding for new users
     try {
-        const { sendVisualOnboarding } = await import('./menuHandlers');
         await sendVisualOnboarding(ctx);
     } catch (e) { console.error("Onboarding Error", e); }
 
     // Send Main Menu
-    const { getMainMenu } = await import('./menus');
     await ctx.editMessageText(t(user.language as any, 'welcome') + "\n\n✅ Terms Accepted.");
     await ctx.reply("Main Menu:", { reply_markup: getMainMenu(user.role, user.language) });
 });
@@ -380,7 +370,6 @@ bot.command('audit', async (ctx) => {
 // Pagination for Manage Channels
 bot.callbackQuery(/^channels_page_(\d+)$/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
-    const { handleManageChannels } = await import('./subscriptionHandlers');
     await ctx.answerCallbackQuery();
     await handleManageChannels(ctx, page);
 });
@@ -388,8 +377,6 @@ bot.callbackQuery(/^channels_page_(\d+)$/, async (ctx) => {
 // Channel Management Callbacks
 bot.callbackQuery('add_channel_start', async (ctx) => {
     const user = ctx.user;
-    const { getCancelKeyboard } = await import('./menus');
-    const { t } = await import('@/lib/i18n');
 
     user.interactionState = 'awaiting_channel_username';
     await user.save();
@@ -400,15 +387,12 @@ bot.callbackQuery('add_channel_start', async (ctx) => {
 
 bot.callbackQuery(/^manage_ch_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
-    const { handleChannelDetails } = await import('./subscriptionHandlers');
     await ctx.answerCallbackQuery();
     await handleChannelDetails(ctx, channelId);
 });
 
 bot.callbackQuery(/^add_plan_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
-    const { t } = await import('@/lib/i18n');
-    const { InlineKeyboard } = await import('grammy');
 
     // Ask Duration first
     const kb = new InlineKeyboard()
@@ -431,24 +415,17 @@ bot.callbackQuery(/^plan_dur_(\d+)_(.+)$/, async (ctx) => {
     ctx.user.tempData = { planDuration: duration, planChannelId: channelId };
     await ctx.user.save();
 
-    const { t } = await import('@/lib/i18n');
-    const { getCancelKeyboard } = await import('./menus');
-
     await ctx.answerCallbackQuery();
     await ctx.reply(t(ctx.user.language as any, 'plan_price_prompt'), { reply_markup: getCancelKeyboard(ctx.user.language) });
 });
 
 bot.callbackQuery(/^buy_plan_(.+)$/, async (ctx) => {
     const planId = ctx.match[1];
-    const { handleBuySubscription } = await import('./subscriptionHandlers');
     await ctx.answerCallbackQuery();
     await handleBuySubscription(ctx, planId);
 });
 
 bot.callbackQuery('add_channel', async (ctx) => {
-    const { t } = await import('@/lib/i18n');
-    const { getCancelKeyboard } = await import('./menus');
-
     ctx.user.interactionState = 'awaiting_channel_username';
     await ctx.user.save();
     await ctx.answerCallbackQuery();
@@ -465,9 +442,6 @@ bot.callbackQuery(/^ch_cat_(.+)$/, async (ctx) => {
     }
 
     const { channelId, title, username } = user.tempData;
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-    const { getMerchantMenu } = await import('./menus');
-    const { t } = await import('@/lib/i18n');
     const l = user.language as any;
 
     // Save to DB with category
@@ -485,7 +459,6 @@ bot.callbackQuery(/^ch_cat_(.+)$/, async (ctx) => {
     );
 
     // Audit Log
-    const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
     await logAudit(user._id, AUDIT_ACTIONS.CHANNEL_ADDED, 'channel', String(savedChannel._id), {
         channelTitle: title,
         category
@@ -503,8 +476,6 @@ bot.callbackQuery(/^ch_cat_(.+)$/, async (ctx) => {
 // Edit Channel Category - Show category selection
 bot.callbackQuery(/^edit_ch_cat_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
-    const { InlineKeyboard } = await import('grammy');
-    const { t } = await import('@/lib/i18n');
     const l = ctx.user.language as any;
 
     const kb = new InlineKeyboard()
@@ -525,8 +496,6 @@ bot.callbackQuery(/^update_ch_cat_(.+)_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
     const category = ctx.match[2];
 
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-    const { t } = await import('@/lib/i18n');
     const l = ctx.user.language as any;
 
     const ch = await MerchantChannel.findById(channelId);
@@ -538,7 +507,7 @@ bot.callbackQuery(/^update_ch_cat_(.+)_(.+)$/, async (ctx) => {
     await ch.save();
 
     // Audit Log
-    const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
+    // Audit Log
     await logAudit(ctx.user._id, AUDIT_ACTIONS.CHANNEL_CATEGORY_CHANGED, 'channel', channelId, {
         channelTitle: ch.title,
         oldCategory,
@@ -548,7 +517,6 @@ bot.callbackQuery(/^update_ch_cat_(.+)_(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Category updated!" });
 
     // Redirect back to channel details
-    const { handleChannelDetails } = await import('./subscriptionHandlers');
     try { await ctx.deleteMessage(); } catch (e) { }
     await handleChannelDetails(ctx, channelId);
 });
@@ -556,9 +524,6 @@ bot.callbackQuery(/^update_ch_cat_(.+)_(.+)$/, async (ctx) => {
 // Manage Plans - Show list of all plans
 bot.callbackQuery(/^manage_plans_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-    const { InlineKeyboard } = await import('grammy');
 
     const ch = await MerchantChannel.findById(channelId);
     if (!ch) return ctx.answerCallbackQuery({ text: "Channel not found." });
@@ -589,9 +554,6 @@ bot.callbackQuery(/^manage_plans_(.+)$/, async (ctx) => {
 // Edit Plan - Show options
 bot.callbackQuery(/^edit_plan_(.+)$/, async (ctx) => {
     const planId = ctx.match[1];
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-    const { InlineKeyboard } = await import('grammy');
 
     const plan = await SubscriptionPlan.findById(planId).populate('channelId');
     if (!plan) return ctx.answerCallbackQuery({ text: "Plan not found." });
@@ -620,8 +582,6 @@ bot.callbackQuery(/^edit_plan_(.+)$/, async (ctx) => {
 // Toggle Plan Active/Inactive
 bot.callbackQuery(/^toggle_plan_(.+)$/, async (ctx) => {
     const planId = ctx.match[1];
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
 
     const plan = await SubscriptionPlan.findById(planId).populate('channelId');
     if (!plan) return ctx.answerCallbackQuery({ text: "Plan not found." });
@@ -634,7 +594,6 @@ bot.callbackQuery(/^toggle_plan_(.+)$/, async (ctx) => {
     await plan.save();
 
     // Audit Log
-    const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
     await logAudit(ctx.user._id, AUDIT_ACTIONS.PLAN_TOGGLED, 'plan', planId, {
         planName: (plan as any).name || `${plan.durationMonths} Month(s)`,
         channelTitle: ch.title,
@@ -645,7 +604,6 @@ bot.callbackQuery(/^toggle_plan_(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery({ text: plan.isActive ? "Plan enabled!" : "Plan disabled!" });
 
     // Refresh edit view
-    const { InlineKeyboard } = await import('grammy');
     const name = (plan as any).name || `${plan.durationMonths} Month(s)`;
     const status = plan.isActive ? '✅ Active' : '❌ Inactive';
 
@@ -666,8 +624,6 @@ bot.callbackQuery(/^toggle_plan_(.+)$/, async (ctx) => {
 // Edit Plan Price - Prompt
 bot.callbackQuery(/^edit_plan_price_(.+)$/, async (ctx) => {
     const planId = ctx.match[1];
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
 
     const plan = await SubscriptionPlan.findById(planId).populate('channelId');
     if (!plan) return ctx.answerCallbackQuery({ text: "Plan not found." });
@@ -686,7 +642,6 @@ bot.callbackQuery(/^edit_plan_price_(.+)$/, async (ctx) => {
 });
 
 bot.callbackQuery('admin_channels_back', async (ctx) => {
-    const { handleManageChannels } = await import('./subscriptionHandlers');
     await ctx.answerCallbackQuery();
     try { await ctx.deleteMessage(); } catch (e) { }
     await handleManageChannels(ctx);
@@ -720,9 +675,6 @@ bot.on('callback_query:data', async (ctx, next) => {
         user.interactionState = 'idle';
         user.tempData = undefined; // Clear temp data
         await user.save();
-
-        const { default: Transaction } = await import('@/models/Transaction');
-        const { default: Subscription } = await import('@/models/Subscription');
 
         // Create Transaction
         const tx = await Transaction.create({
@@ -775,7 +727,6 @@ bot.on('callback_query:data', async (ctx, next) => {
                 report += `Spent: ${usage.toLocaleString()}\n`;
                 report += `Current Balance: ${user.balance.toLocaleString()}`;
 
-                const { InlineKeyboard } = await import('grammy');
                 const adminKb = new InlineKeyboard()
                     .text("✅ Completed", `withdraw_complete_${tx._id}`).row()
                     .text("❌ Rejected", `withdraw_reject_${tx._id}`);
@@ -796,8 +747,6 @@ bot.callbackQuery(/^withdraw_complete_(.+)$/, async (ctx) => {
     if (ctx.user.role !== 'admin') return ctx.answerCallbackQuery({ text: "Not authorized." });
 
     const txId = ctx.match[1];
-    const { default: Transaction } = await import('@/models/Transaction');
-    const { default: User } = await import('@/models/User');
 
     console.log(`[DEBUG] processing withdraw_complete for: ${txId}`);
     const tx = await Transaction.findById(txId);
@@ -857,13 +806,11 @@ bot.callbackQuery(/^withdraw_reject_(.+)$/, async (ctx) => {
 
 bot.callbackQuery(/^buy_plan_(.+)$/, async (ctx) => {
     const planId = ctx.match[1];
-    const { handleBuyPlan } = await import('./subscription');
     await ctx.answerCallbackQuery();
     await handleBuyPlan(ctx, planId);
 });
 bot.callbackQuery(/^confirm_sub_(.+)$/, async (ctx) => {
     const planId = ctx.match[1];
-    const { handleConfirmSub } = await import('./subscription');
     // Don't answer CB yet? Or Answer with "Processing..."
     await ctx.answerCallbackQuery({ text: "Processing..." });
     await handleConfirmSub(ctx, planId);
@@ -874,7 +821,6 @@ bot.callbackQuery('cancel_plan_add', async (ctx) => {
     ctx.user.tempData = undefined;
     await ctx.user.save();
 
-    const { getMerchantMenu } = await import('./menus');
     await ctx.answerCallbackQuery();
     await ctx.reply("Cancelled.", { reply_markup: getMerchantMenu(ctx.user.language) });
     try {
@@ -888,9 +834,6 @@ bot.callbackQuery('cancel_sub', async (ctx) => {
 });
 
 bot.callbackQuery('add_payment_account', async (ctx) => {
-    const { getProviderKeyboard } = await import('./menus');
-    const { t } = await import('@/lib/i18n');
-
     ctx.user.interactionState = 'awaiting_payment_provider';
     await ctx.user.save();
 
@@ -935,8 +878,7 @@ bot.callbackQuery(/^topup_approve_(.+)$/, async (ctx) => {
     if (!targetUser) return ctx.answerCallbackQuery({ text: "User not found." });
 
     // Atomic Approve
-    const mongoose = await import('mongoose');
-    const session = await mongoose.default.startSession();
+    const session = await mongoose.startSession();
     session.startTransaction();
     try {
         tx.status = 'approved';
@@ -1009,7 +951,6 @@ bot.callbackQuery(/^topup_reject_(.+)$/, async (ctx) => {
     ctx.user.tempData = { rejectTxId: txId };
     await ctx.user.save();
 
-    const { t } = await import('@/lib/i18n');
     await ctx.reply(t(ctx.user.language as any, 'admin_reject_reason_prompt'));
     await ctx.answerCallbackQuery();
 
@@ -1021,7 +962,6 @@ bot.callbackQuery(/^topup_reject_(.+)$/, async (ctx) => {
 // Invoice Management Callbacks
 bot.callbackQuery(/^view_invoice_(.+)$/, async (ctx) => {
     const id = ctx.match[1];
-    const { default: Invoice } = await import('@/models/Invoice');
     const invoice = await Invoice.findById(id);
 
     if (!invoice) return ctx.answerCallbackQuery({ text: "Invoice not found." });
@@ -1044,9 +984,6 @@ bot.callbackQuery(/^view_invoice_(.+)$/, async (ctx) => {
 
     // Fetch Payers
     // Limit to 5 most recent
-    const { default: Transaction } = await import('@/models/Transaction');
-    const { default: User } = await import('@/models/User'); // Ensure User model is loaded
-
     const payments = await Transaction.find({
         invoiceId: invoice._id,
         status: 'completed'
@@ -1070,7 +1007,6 @@ bot.callbackQuery(/^view_invoice_(.+)$/, async (ctx) => {
         msg += `\n\nNo payments yet.`;
     }
 
-    const { InlineKeyboard } = await import('grammy');
     const kb = new InlineKeyboard();
 
     if (invoice.status === 'active') {
@@ -1090,7 +1026,6 @@ bot.callbackQuery(/^view_invoice_(.+)$/, async (ctx) => {
 
 bot.callbackQuery(/^revoke_invoice_(.+)$/, async (ctx) => {
     const id = ctx.match[1];
-    const { default: Invoice } = await import('@/models/Invoice');
     const invoice = await Invoice.findById(id);
 
     if (!invoice) return ctx.answerCallbackQuery({ text: "Invoice not found." });
@@ -1116,7 +1051,6 @@ bot.callbackQuery(/^revoke_invoice_(.+)$/, async (ctx) => {
         `Usage: ${invoice.usageCount}\n` +
         `Created: ${date}`;
 
-    const { InlineKeyboard } = await import('grammy');
     const kb = new InlineKeyboard()
         .text("🔙 Back", "merchant_menu_invoice");
 
@@ -1125,7 +1059,6 @@ bot.callbackQuery(/^revoke_invoice_(.+)$/, async (ctx) => {
 
 bot.callbackQuery(/^view_invoices_list_(.+)$/, async (ctx) => {
     const type = ctx.match[1]; // 'one-time' or 'reusable'
-    const { showInvoices } = await import('./invoiceHandlers');
     await showInvoices(ctx, 1, type);
     // Was inline message, showInvoices will handle editing or new message logic.
     // If ctx.match (callback), showInvoices edit.
@@ -1135,14 +1068,12 @@ bot.callbackQuery(/^view_invoices_list_(.+)$/, async (ctx) => {
 bot.callbackQuery(/^invoices_page_(\d+)_(.+)$/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
     const type = ctx.match[2]; // 'one-time' or 'reusable'
-    const { showInvoices } = await import('./invoiceHandlers'); // New file? Or put in adminHandlers?
     // Let's keep it in handlers.ts or move to invoiceHandlers.ts?
     // Move to invoiceHandlers.ts is cleaner.
     await showInvoices(ctx, page, type);
 });
 
 bot.callbackQuery('merchant_menu_invoice', async (ctx) => {
-    const { getInvoiceMenu } = await import('./menus');
     // If coming from Back button, we might want to show Invoice Menu (Create/View)
     // Or restart the whole flow?
     // "Back" button -> "merchant_menu_invoice" -> Shows "Invoices:" with Reply Keyboard?
@@ -1154,30 +1085,25 @@ bot.callbackQuery('merchant_menu_invoice', async (ctx) => {
 });
 
 bot.callbackQuery('start_topup_flow', async (ctx) => {
-    const { startTopupflow } = await import('./menuHandlers');
     await ctx.answerCallbackQuery();
     await startTopupflow(ctx);
 });
 
 // Admin Handlers
 bot.command('admin', async (ctx) => {
-    const { handleAdminCommand } = await import('./adminHandlers');
     await handleAdminCommand(ctx);
 });
 
 bot.callbackQuery('admin_stats', async (ctx) => {
-    const { handleAdminStats } = await import('./adminHandlers');
     await handleAdminStats(ctx);
 });
 
 bot.callbackQuery('admin_broadcast', async (ctx) => {
-    const { handleAdminBroadcast } = await import('./adminHandlers');
     await handleAdminBroadcast(ctx);
 });
 
 bot.callbackQuery('admin_home', async (ctx) => {
     await ctx.answerCallbackQuery();
-    const { handleAdminCommand } = await import('./adminHandlers');
     await handleAdminCommand(ctx);
     // Wait, handleAdminCommand uses reply (new message). 
     // We might want to edit. But reuse is fine for MVP.
@@ -1186,31 +1112,26 @@ bot.callbackQuery('admin_home', async (ctx) => {
 // History
 const historyKeys = [t('en', 'history_btn'), t('my', 'history_btn')];
 bot.hears(historyKeys, async (ctx) => {
-    const { showHistory } = await import('./menuHandlers');
     await showHistory(ctx, 1);
 });
 
 bot.callbackQuery(/^history_page_(\d+)$/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
-    const { showHistory } = await import('./menuHandlers');
     await showHistory(ctx, page);
 });
 
 // My Subscriptions
 const mySubsKeys = [t('en', 'my_subs_btn'), t('my', 'my_subs_btn')];
 bot.hears(mySubsKeys, async (ctx) => {
-    const { showUserSubscriptions } = await import('./subscriptionHandlers');
     await showUserSubscriptions(ctx, 1);
 });
 
 bot.callbackQuery(/^mysubs_page_(\d+)$/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
-    const { showUserSubscriptions } = await import('./subscriptionHandlers');
     await showUserSubscriptions(ctx, page);
 });
 
 bot.callbackQuery('admin_users', async (ctx) => {
-    const { handleAdminUsers } = await import('./adminHandlers');
     await handleAdminUsers(ctx);
 });
 
@@ -1221,7 +1142,6 @@ bot.callbackQuery('remove_payment_account_menu', async (ctx) => {
     }
 
     // Show buttons to remove
-    const { InlineKeyboard } = await import('grammy');
     const kb = new InlineKeyboard();
     user.paymentMethods.forEach((pm: any, i: number) => {
         kb.text(`🗑 ${pm.provider} - ${pm.accountNumber}`, `remove_acc_${i}`).row();
@@ -1256,13 +1176,11 @@ bot.callbackQuery(/^remove_acc_(\d+)$/, async (ctx) => {
     // Duplicate logic from menuHandlers... suboptimal but quick.
     // Or just say "Removed" and show "Back" button.
 
-    const { InlineKeyboard } = await import('grammy');
     const kb = new InlineKeyboard().text("🔙 Back to Settings", "back_to_settings_refresh");
     await ctx.editMessageText("✅ Account Removed.", { reply_markup: kb });
 });
 
 bot.callbackQuery('back_to_settings_refresh', async (ctx) => {
-    const { showSettings } = await import('./menuHandlers');
     await showSettings(ctx);
 });
 
@@ -1270,7 +1188,6 @@ bot.callbackQuery(/^admin_unfreeze_(.+)$/, async (ctx) => {
     // Admin check
     if (ctx.user.role !== 'admin') return ctx.answerCallbackQuery({ text: "Not authorized." });
 
-    const { handleUnfreezeUser } = await import('./adminHandlers');
     await handleUnfreezeUser(ctx, ctx.match[1]);
 });
 
@@ -1278,23 +1195,19 @@ bot.callbackQuery(/^admin_freeze_(.+)$/, async (ctx) => {
     // Admin check
     if (ctx.user.role !== 'admin') return ctx.answerCallbackQuery({ text: "Not authorized." });
 
-    const { handleFreezeUser } = await import('./adminHandlers');
     await handleFreezeUser(ctx, ctx.match[1]);
 });
 
 bot.callbackQuery('admin_find_user', async (ctx) => {
-    const { handleFindUserPrompt } = await import('./adminHandlers');
     await handleFindUserPrompt(ctx);
 });
 
 // Inline Query
 bot.on('inline_query', async (ctx) => {
-    const { handleInlineQuery } = await import('./inline');
     handleInlineQuery(ctx);
 });
 
 // All other messages (Menu clicks, text)
 bot.on('message', async (ctx) => {
-    const { handleMenuClick } = await import('./menuHandlers');
     handleMenuClick(ctx);
 });

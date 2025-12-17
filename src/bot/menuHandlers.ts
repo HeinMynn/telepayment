@@ -1,8 +1,8 @@
-import path from 'path';
 import { BotContext } from './types';
 import { t } from '@/lib/i18n';
 import { getMainMenu, getMerchantMenu, getInvoiceMenu, getInvoiceTypeMenu, getCancelKeyboard } from './menus';
 import User from '@/models/User';
+import path from 'path';
 
 export async function handleMenuClick(ctx: BotContext) {
     const text = ctx.message?.text;
@@ -107,7 +107,7 @@ export async function handleMenuClick(ctx: BotContext) {
     // 8. Merchant -> Manage Channels
     if (text === t(l, 'merchant_menu_channels')) {
         const { handleManageChannels } = await import('./subscriptionHandlers');
-        return handleManageChannels(ctx, 1);
+        return handleManageChannels(ctx);
     }
 
     // 7. Merchant -> Edit Name
@@ -251,10 +251,8 @@ export async function startTopupflow(ctx: BotContext) {
     const l = user.language as any;
     const { getProviderKeyboard } = await import('./menus'); // Import local helper
 
-    // Optimization: Combine into one message for Vercel reliability
-    await ctx.reply(`${t(l, 'topup_intro')}\n\n${t(l, 'select_provider_topup')}`, {
-        reply_markup: getProviderKeyboard(user.language)
-    });
+    await ctx.reply(t(l, 'topup_intro'));
+    await ctx.reply(t(l, 'select_provider_topup'), { reply_markup: getProviderKeyboard(user.language) });
 
     // Set State
     user.interactionState = 'awaiting_topup_provider';
@@ -428,6 +426,7 @@ export async function handleOnboardingCallback(ctx: BotContext, step: string) {
 }
 
 export async function showLeaderboard(ctx: BotContext) {
+    const { default: User } = await import('@/models/User');
     const { default: Transaction } = await import('@/models/Transaction');
     const currentUser = ctx.user;
 
@@ -436,38 +435,24 @@ export async function showLeaderboard(ctx: BotContext) {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
 
-    // Parallel Execution: Top 10 + My Count
-    const [leaderboard, myCount] = await Promise.all([
-        // 1. Get Top 10 with User Details in ONE query
-        Transaction.aggregate([
-            { $match: { type: 'referral', createdAt: { $gte: startOfMonth } } },
-            { $group: { _id: '$toUser', count: { $sum: 1 } } },
-            { $sort: { count: -1 } },
-            { $limit: 10 },
-            {
-                $lookup: {
-                    from: 'users',
-                    localField: '_id',
-                    foreignField: '_id',
-                    as: 'user'
-                }
-            },
-            { $unwind: '$user' },
-            {
-                $project: {
-                    username: '$user.username',
-                    firstName: '$user.firstName',
-                    count: 1
-                }
+    // Aggregate: Count referral bonus transactions per referrer (this month)
+    // Each 'referral' type transaction represents a successful referral claim
+    const leaderboard = await Transaction.aggregate([
+        {
+            $match: {
+                type: 'referral',
+                createdAt: { $gte: startOfMonth }
             }
-        ]),
-        // 2. Get My Referral Count (Fast)
-        Transaction.countDocuments({
-            type: 'referral',
-            createdAt: { $gte: startOfMonth },
-            toUser: currentUser._id
-        })
+        },
+        { $group: { _id: '$toUser', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
     ]);
+
+    // Get user details for display
+    const referrerIds = leaderboard.map(e => e._id);
+    const referrers = await User.find({ _id: { $in: referrerIds } });
+    const referrerMap = new Map(referrers.map(r => [r._id.toString(), r]));
 
     // Build display
     let msg = `🏆 <b>Top Referrers - ${monthName}</b>\n\n`;
@@ -477,31 +462,29 @@ export async function showLeaderboard(ctx: BotContext) {
     } else {
         const badges = ['🥇', '🥈', '🥉'];
         leaderboard.forEach((entry, i) => {
-            const displayName = maskUsername(entry.username, entry.firstName);
+            const referrer = referrerMap.get(entry._id.toString());
+            const displayName = maskUsername(referrer?.username, referrer?.firstName);
             const badge = badges[i] || `${i + 1}.`;
             msg += `${badge} ${displayName} - <b>${entry.count}</b> referrals\n`;
         });
     }
 
-    // 3. Conditional Rank Calculation (Only if I have referrals)
-    let rankText = '';
-    if (myCount > 0) {
-        // Count how many people have MORE referrals than me
-        // We optimize by NOT grouping everyone, but filtering early if possible. 
-        // Actually grouping is required to count per-user.
-        const output = await Transaction.aggregate([
-            { $match: { type: 'referral', createdAt: { $gte: startOfMonth } } },
-            { $group: { _id: '$toUser', count: { $sum: 1 } } },
-            { $match: { count: { $gt: myCount } } },
-            { $count: "betterThanMe" }
-        ]);
-        const rank = (output[0]?.betterThanMe || 0) + 1;
-        rankText = `\n<i>Your Rank: #${rank} (${myCount} this month)</i>`;
-    } else {
-        rankText = `\n<i>Your Rank: - (${myCount} this month)</i>`;
-    }
+    // User's own rank (this month)
+    const userRankData = await Transaction.aggregate([
+        {
+            $match: {
+                type: 'referral',
+                createdAt: { $gte: startOfMonth }
+            }
+        },
+        { $group: { _id: '$toUser', count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+    ]);
 
-    msg += rankText;
+    const userRank = userRankData.findIndex(e => e._id.toString() === currentUser._id.toString());
+    const userCount = userRank >= 0 ? userRankData[userRank].count : 0;
+
+    msg += `\n<i>Your Rank: ${userRank >= 0 ? `#${userRank + 1}` : 'Unranked'} (${userCount} this month)</i>`;
 
     await ctx.reply(msg, { parse_mode: 'HTML' });
 }

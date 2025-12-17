@@ -201,13 +201,61 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
     const PAGE_SIZE = 5;
     const skip = (page - 1) * PAGE_SIZE;
 
-    // Simple query to get channels
-    const filter = { merchantId: user._id, isActive: true };
-    const totalCount = await MerchantChannel.countDocuments(filter);
+    // Single roundtrip: paginate + total count + plan counts
+    const [result] = await MerchantChannel.aggregate([
+      { $match: { merchantId: user._id, isActive: true } },
+      {
+        $facet: {
+          total: [{ $count: "count" }],
+          channels: [
+            { $sort: { createdAt: -1, _id: 1 } },
+            { $skip: skip },
+            { $limit: PAGE_SIZE },
+            {
+              $lookup: {
+                from: "subscriptionplans",
+                let: { chId: "$_id" },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $and: [
+                          { $eq: ["$channelId", "$$chId"] },
+                          { $eq: ["$isActive", true] },
+                        ],
+                      },
+                    },
+                  },
+                  { $count: "count" },
+                ],
+                as: "planStats",
+              },
+            },
+            {
+              $addFields: {
+                planCount: {
+                  $ifNull: [{ $arrayElemAt: ["$planStats.count", 0] }, 0],
+                },
+              },
+            },
+            { $project: { title: 1, planCount: 1 } },
+          ],
+        },
+      },
+      {
+        $project: {
+          totalCount: { $ifNull: [{ $arrayElemAt: ["$total.count", 0] }, 0] },
+          channels: 1,
+        },
+      },
+    ]);
+
+    const totalCount = result?.totalCount ?? 0;
+    const channels = result?.channels ?? [];
     const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
     // If a stale page is requested after channels were removed, jump to the last page.
-    if (page > totalPages && totalCount > 0) {
+    if (channels.length === 0 && totalCount > 0 && page > totalPages) {
       return handleManageChannels(ctx, totalPages);
     }
 
@@ -226,20 +274,14 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
       return;
     }
 
-    const channels = await MerchantChannel.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(PAGE_SIZE)
-      .select('title');
-
     // Guard against stale page numbers
     const safePage = Math.min(Math.max(page, 1), totalPages);
 
-    let msg = `<b>📢 Your Channels (Page ${safePage}/${totalPages})</b>\nSelect a channel to manage:\n`;
+    let msg = `<b>📢 Your Channels (Page ${safePage}/${totalPages})</b>\nSelect a channel to manage plans:\n`;
 
     const kb = new InlineKeyboard();
     for (const ch of channels) {
-      msg += `\n• <b>${ch.title}</b>`;
+      msg += `\n• <b>${ch.title}</b> (${ch.planCount} Plans)`;
       kb.text(ch.title, `manage_ch_${ch._id}`).row();
     }
 
