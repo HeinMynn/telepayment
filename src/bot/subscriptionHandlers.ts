@@ -317,19 +317,31 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
           console.log(`[ManageChannels] Total time: ${Date.now() - startTime}ms (no change)`);
           return;
         }
-        throw err;
+        // If message can't be edited (deleted/too old), send new message instead
+        if (err?.description?.includes("message to edit not found")) {
+          console.log('[ManageChannels] Message not found, sending new reply');
+          await ctx.reply(msg, { parse_mode: "HTML", reply_markup: kb });
+        } else {
+          throw err;
+        }
       }
     } else {
       await ctx.reply(msg, { parse_mode: "HTML", reply_markup: kb });
     }
     console.log(`[ManageChannels] Total time: ${Date.now() - startTime}ms`);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Manage Channels Error:", error);
     console.log(`[ManageChannels] Total time: ${Date.now() - startTime}ms (error)`);
     const fallback = "❌ Error loading channels.";
-    if (ctx.callbackQuery) {
-      await ctx.editMessageText(fallback);
-    } else {
+    // Use reply as safe fallback - editMessageText may fail if message doesn't exist
+    try {
+      if (ctx.callbackQuery && !error?.description?.includes("message to edit not found")) {
+        await ctx.editMessageText(fallback);
+      } else {
+        await ctx.reply(fallback);
+      }
+    } catch {
+      // Last resort: just reply
       await ctx.reply(fallback);
     }
   }
