@@ -4,398 +4,406 @@ import { getPaginationKeyboard } from './menus';
 import { t } from '@/lib/i18n';
 
 export async function showUserSubscriptions(ctx: BotContext, page: number, editMessageId?: number) {
-    const { default: Subscription } = await import('@/models/Subscription');
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel'); // Need to populate?
+  const { default: Subscription } = await import('@/models/Subscription');
+  const { default: MerchantChannel } = await import('@/models/MerchantChannel'); // Need to populate?
 
-    // Mongoose populate is easier if Schema is set up. 
-    // Assuming Subscription has ref to 'MerchantChannel'.
+  // Mongoose populate is easier if Schema is set up. 
+  // Assuming Subscription has ref to 'MerchantChannel'.
 
-    const user = ctx.user;
-    const l = user.language as any;
-    const pageSize = 5;
-    const skip = (page - 1) * pageSize;
+  const user = ctx.user;
+  const l = user.language as any;
+  const pageSize = 5;
+  const skip = (page - 1) * pageSize;
 
-    const filter = { userId: user._id };
+  const filter = { userId: user._id };
 
-    const totalCount = await Subscription.countDocuments(filter);
-    const totalPages = Math.ceil(totalCount / pageSize);
+  const totalCount = await Subscription.countDocuments(filter);
+  const totalPages = Math.ceil(totalCount / pageSize);
 
-    if (totalCount === 0) {
-        const kb = new InlineKeyboard()
-            .text("🔍 Explore Channels", "explore_channels"); // Needs handler
-        if (page === 1) await ctx.reply(t(l, 'no_subs'), { reply_markup: kb });
-        else await ctx.answerCallbackQuery(t(l, 'no_more_results'));
-        return;
+  if (totalCount === 0) {
+    const kb = new InlineKeyboard()
+      .text("🔍 Explore Channels", "explore_channels"); // Needs handler
+    if (page === 1) await ctx.reply(t(l, 'no_subs'), { reply_markup: kb });
+    else await ctx.answerCallbackQuery(t(l, 'no_more_results'));
+    return;
+  }
+
+  const subs = await Subscription.find(filter)
+    .sort({ endDate: -1 })
+    .skip(skip)
+    .limit(pageSize)
+    .populate('channelId'); // Populate channel details
+
+  let report = `<b>${t(l, 'sub_history_title')} (Page ${page}/${totalPages})</b>\n`;
+
+  subs.forEach((sub: any) => {
+    const channelName = sub.channelId?.title || "Unknown Channel";
+    const expiry = new Date(sub.endDate).toLocaleDateString();
+    const status = sub.status === 'active' ? t(l, 'sub_active') : t(l, 'sub_expired');
+    const icon = sub.status === 'active' ? '🟢' : '🔴';
+
+    report += `\n${icon} <b>${channelName}</b>`;
+    report += `\n📅 Exp: ${expiry} | ${status}\n`;
+  });
+
+  const kb = getPaginationKeyboard(page, totalPages, 'mysubs');
+
+  if (ctx.callbackQuery) {
+    try {
+      await ctx.editMessageText(report, { parse_mode: 'HTML', reply_markup: kb });
+    } catch (e: any) {
+      if (e.description?.includes('message is not modified')) {
+        await ctx.answerCallbackQuery("Updated.");
+      }
     }
-
-    const subs = await Subscription.find(filter)
-        .sort({ endDate: -1 })
-        .skip(skip)
-        .limit(pageSize)
-        .populate('channelId'); // Populate channel details
-
-    let report = `<b>${t(l, 'sub_history_title')} (Page ${page}/${totalPages})</b>\n`;
-
-    subs.forEach((sub: any) => {
-        const channelName = sub.channelId?.title || "Unknown Channel";
-        const expiry = new Date(sub.endDate).toLocaleDateString();
-        const status = sub.status === 'active' ? t(l, 'sub_active') : t(l, 'sub_expired');
-        const icon = sub.status === 'active' ? '🟢' : '🔴';
-
-        report += `\n${icon} <b>${channelName}</b>`;
-        report += `\n📅 Exp: ${expiry} | ${status}\n`;
-    });
-
-    const kb = getPaginationKeyboard(page, totalPages, 'mysubs');
-
-    if (ctx.callbackQuery) {
-        try {
-            await ctx.editMessageText(report, { parse_mode: 'HTML', reply_markup: kb });
-        } catch (e: any) {
-            if (e.description?.includes('message is not modified')) {
-                await ctx.answerCallbackQuery("Updated.");
-            }
-        }
-    } else if (editMessageId) {
-        try {
-            await ctx.api.editMessageText(ctx.chat?.id!, editMessageId, report, { parse_mode: 'HTML', reply_markup: kb });
-        } catch (e) { /* ignore */ }
-    } else {
-        await ctx.reply(report, { parse_mode: 'HTML', reply_markup: kb });
-    }
+  } else if (editMessageId) {
+    try {
+      await ctx.api.editMessageText(ctx.chat?.id!, editMessageId, report, { parse_mode: 'HTML', reply_markup: kb });
+    } catch (e) { /* ignore */ }
+  } else {
+    await ctx.reply(report, { parse_mode: 'HTML', reply_markup: kb });
+  }
 }
 
 export async function handleSubscriptionStart(ctx: BotContext, payload: string) {
-    // Payload: sub_PLANID
-    const planId = payload.replace('sub_', '');
+  // Payload: sub_PLANID
+  const planId = payload.replace('sub_', '');
 
-    // Import Models
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-    const { default: User } = await import('@/models/User');
+  // Import Models
+  const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+  const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+  const { default: User } = await import('@/models/User');
 
-    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+  const plan = await SubscriptionPlan.findById(planId).populate('channelId');
 
-    if (!plan) {
-        return ctx.reply("❌ Limit Plan or Channel not found.");
-    }
+  if (!plan) {
+    return ctx.reply("❌ Limit Plan or Channel not found.");
+  }
 
-    const channel = plan.channelId as any;
-    const user = ctx.user;
+  const channel = plan.channelId as any;
+  const user = ctx.user;
 
-    const price = plan.price;
-    const balance = user.balance;
+  const price = plan.price;
+  const balance = user.balance;
 
-    const msg = `🛒 <b>Purchase Subscription</b>\n\n` +
-        `Channel: <b>${channel.title}</b>\n` +
-        `Plan: ${plan.name || `${plan.durationMonths} Month(s)`} (${plan.durationMonths} month(s))\n` +
-        `Price: <b>${price.toLocaleString()} MMK</b>\n\n` +
-        `Your Balance: ${balance.toLocaleString()} MMK`;
+  const msg = `🛒 <b>Purchase Subscription</b>\n\n` +
+    `Channel: <b>${channel.title}</b>\n` +
+    `Plan: ${plan.name || `${plan.durationMonths} Month(s)`} (${plan.durationMonths} month(s))\n` +
+    `Price: <b>${price.toLocaleString()} MMK</b>\n\n` +
+    `Your Balance: ${balance.toLocaleString()} MMK`;
 
-    const kb = new InlineKeyboard();
+  const kb = new InlineKeyboard();
 
-    if (balance >= price) {
-        kb.text(`✅ Pay with Balance`, `buy_sub_${plan._id}`); // Handler needed!
-    } else {
-        kb.text(`💰 Top Up Balance`, `topup_start`); // Generic topup
-    }
+  if (balance >= price) {
+    kb.text(`✅ Pay with Balance`, `buy_sub_${plan._id}`); // Handler needed!
+  } else {
+    kb.text(`💰 Top Up Balance`, `topup_start`); // Generic topup
+  }
 
-    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+  await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
 }
 
 export async function handleBuySubscription(ctx: BotContext, planId: string) {
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { default: Subscription } = await import('@/models/Subscription');
-    const { default: Transaction } = await import('@/models/Transaction');
-    const { default: User } = await import('@/models/User');
+  const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+  const { default: Subscription } = await import('@/models/Subscription');
+  const { default: Transaction } = await import('@/models/Transaction');
+  const { default: User } = await import('@/models/User');
 
-    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
-    if (!plan) return ctx.answerCallbackQuery("Plan not found.");
+  const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+  if (!plan) return ctx.answerCallbackQuery("Plan not found.");
 
 
-    const channelTitle = (plan.channelId as any).title;
-    const planName = plan.name || `${plan.durationMonths} Month(s)`;
+  const channelTitle = (plan.channelId as any).title;
+  const planName = plan.name || `${plan.durationMonths} Month(s)`;
 
-    const user = await User.findById(ctx.user._id); // Refresh user
-    if (!user) return;
+  const user = await User.findById(ctx.user._id); // Refresh user
+  if (!user) return;
 
-    if (user.balance < plan.price) {
-        return ctx.answerCallbackQuery("Insufficient Balance.");
-    }
+  if (user.balance < plan.price) {
+    return ctx.answerCallbackQuery("Insufficient Balance.");
+  }
 
-    // Deduct
-    user.balance -= plan.price;
-    await user.save();
+  // Deduct
+  user.balance -= plan.price;
+  await user.save();
 
-    // Check for existing active subscription
-    const existingSub = await Subscription.findOne({
-        userId: user._id,
-        channelId: plan.channelId._id,
-        status: 'active'
+  // Check for existing active subscription
+  const existingSub = await Subscription.findOne({
+    userId: user._id,
+    channelId: plan.channelId._id,
+    status: 'active'
+  });
+
+  if (existingSub) {
+    // Extend
+    const now = new Date();
+    let baseDate = new Date(existingSub.endDate);
+    if (baseDate < now) baseDate = now;
+
+    const newEndDate = new Date(baseDate);
+    newEndDate.setMonth(newEndDate.getMonth() + plan.durationMonths);
+
+    existingSub.endDate = newEndDate;
+    existingSub.planId = plan._id;
+    existingSub.notifiedWarning = false;
+    existingSub.notifiedFinal = false;
+    existingSub.notifiedExpired = false;
+    await existingSub.save();
+  } else {
+    // Create Subscription
+    const endDate = new Date();
+    endDate.setMonth(endDate.getMonth() + plan.durationMonths);
+
+    await Subscription.create({
+      userId: user._id,
+      channelId: plan.channelId._id,
+      planId: plan._id,
+      startDate: new Date(),
+      endDate: endDate,
+      status: 'active'
+    });
+  }
+
+  // Create Transaction Record
+  await Transaction.create({
+    fromUser: user._id,
+    toUser: (plan.channelId as any).merchantId, // Pay to Merchant
+    amount: plan.price,
+    type: 'subscription',
+    status: 'completed',
+    details: `Sub: ${planName}`
+  });
+
+  // Generate Invite Link
+  try {
+    const invite = await ctx.api.createChatInviteLink((plan.channelId as any).channelId, {
+      member_limit: 1,
+      name: `Sub: ${user.firstName}` // Identify key
     });
 
-    if (existingSub) {
-        // Extend
-        const now = new Date();
-        let baseDate = new Date(existingSub.endDate);
-        if (baseDate < now) baseDate = now;
+    const actionVerbed = existingSub ? "renewed" : "purchased";
+    const actionTitle = existingSub ? "Subscription Renewed!" : "Subscription Active!";
 
-        const newEndDate = new Date(baseDate);
-        newEndDate.setMonth(newEndDate.getMonth() + plan.durationMonths);
-
-        existingSub.endDate = newEndDate;
-        existingSub.planId = plan._id;
-        existingSub.notifiedWarning = false;
-        existingSub.notifiedFinal = false;
-        existingSub.notifiedExpired = false;
-        await existingSub.save();
-    } else {
-        // Create Subscription
-        const endDate = new Date();
-        endDate.setMonth(endDate.getMonth() + plan.durationMonths);
-
-        await Subscription.create({
-            userId: user._id,
-            channelId: plan.channelId._id,
-            planId: plan._id,
-            startDate: new Date(),
-            endDate: endDate,
-            status: 'active'
-        });
-    }
-
-    // Create Transaction Record
-    await Transaction.create({
-        fromUser: user._id,
-        toUser: (plan.channelId as any).merchantId, // Pay to Merchant
-        amount: plan.price,
-        type: 'subscription',
-        status: 'completed',
-        details: `Sub: ${planName}`
-    });
-
-    // Generate Invite Link
-    try {
-        const invite = await ctx.api.createChatInviteLink((plan.channelId as any).channelId, {
-            member_limit: 1,
-            name: `Sub: ${user.firstName}` // Identify key
-        });
-
-        const actionVerbed = existingSub ? "renewed" : "purchased";
-        const actionTitle = existingSub ? "Subscription Renewed!" : "Subscription Active!";
-
-        await ctx.editMessageText(`✅ <b>${actionTitle}</b>\n\nYou have ${actionVerbed} <b>${planName}</b> for <b>${channelTitle}</b>.\n\n🔗 <a href="${invite.invite_link}">Join Channel Now</a>`, { parse_mode: 'HTML' });
-    } catch (e) {
-        console.error("Failed to generate link:", e);
-        await ctx.reply("Subscription active, but failed to generate link. Please contact admin.");
-    }
+    await ctx.editMessageText(`✅ <b>${actionTitle}</b>\n\nYou have ${actionVerbed} <b>${planName}</b> for <b>${channelTitle}</b>.\n\n🔗 <a href="${invite.invite_link}">Join Channel Now</a>`, { parse_mode: 'HTML' });
+  } catch (e) {
+    console.error("Failed to generate link:", e);
+    await ctx.reply("Subscription active, but failed to generate link. Please contact admin.");
+  }
 }
 
 export async function handleManageChannels(ctx: BotContext, page: number = 1) {
-    const {default: MerchantChannel} = await import("@/models/MerchantChannel");
+  const startTime = Date.now();
+  console.log('[ManageChannels] Starting...');
 
-    const user = ctx.user;
-    const l = user.language as any;
+  const { default: MerchantChannel } = await import("@/models/MerchantChannel");
 
-    try {
-      const PAGE_SIZE = 5;
-      const skip = (page - 1) * PAGE_SIZE;
+  const user = ctx.user;
+  const l = user.language as any;
 
-      // Single roundtrip: paginate + total count + plan counts
-      const [result] = await MerchantChannel.aggregate([
-        {$match: {merchantId: user._id, isActive: true}},
-        {
-          $facet: {
-            total: [{$count: "count"}],
-            channels: [
-              {$sort: {createdAt: -1, _id: 1}},
-              {$skip: skip},
-              {$limit: PAGE_SIZE},
-              {
-                $lookup: {
-                  from: "subscriptionplans",
-                  let: {chId: "$_id"},
-                  pipeline: [
-                    {
-                      $match: {
-                        $expr: {
-                          $and: [
-                            {$eq: ["$channelId", "$$chId"]},
-                            {$eq: ["$isActive", true]},
-                          ],
-                        },
+  try {
+    const PAGE_SIZE = 5;
+    const skip = (page - 1) * PAGE_SIZE;
+
+    // Single roundtrip: paginate + total count + plan counts
+    const queryStart = Date.now();
+    const [result] = await MerchantChannel.aggregate([
+      { $match: { merchantId: user._id, isActive: true } },
+      {
+        $facet: {
+          total: [{ $count: "count" }],
+          channels: [
+            { $sort: { createdAt: -1, _id: 1 } },
+            { $skip: skip },
+            { $limit: PAGE_SIZE },
+            {
+              $lookup: {
+                from: "subscriptionplans",
+                let: { chId: "$_id" },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $and: [
+                          { $eq: ["$channelId", "$$chId"] },
+                          { $eq: ["$isActive", true] },
+                        ],
                       },
                     },
-                    {$count: "count"},
-                  ],
-                  as: "planStats",
-                },
-              },
-              {
-                $addFields: {
-                  planCount: {
-                    $ifNull: [{$arrayElemAt: ["$planStats.count", 0]}, 0],
                   },
+                  { $count: "count" },
+                ],
+                as: "planStats",
+              },
+            },
+            {
+              $addFields: {
+                planCount: {
+                  $ifNull: [{ $arrayElemAt: ["$planStats.count", 0] }, 0],
                 },
               },
-              {$project: {title: 1, planCount: 1}},
-            ],
-          },
+            },
+            { $project: { title: 1, planCount: 1 } },
+          ],
         },
-        {
-          $project: {
-            totalCount: {$ifNull: [{$arrayElemAt: ["$total.count", 0]}, 0]},
-            channels: 1,
-          },
+      },
+      {
+        $project: {
+          totalCount: { $ifNull: [{ $arrayElemAt: ["$total.count", 0] }, 0] },
+          channels: 1,
         },
-      ]);
+      },
+    ]);
+    console.log(`[ManageChannels] Query completed in ${Date.now() - queryStart}ms`);
 
-      const totalCount = result?.totalCount ?? 0;
-      const channels = result?.channels ?? [];
-      const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+    const totalCount = result?.totalCount ?? 0;
+    const channels = result?.channels ?? [];
+    const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
-      // If a stale page is requested after channels were removed, jump to the last page.
-      if (channels.length === 0 && totalCount > 0 && page > totalPages) {
-        return handleManageChannels(ctx, totalPages);
-      }
-
-      if (totalCount === 0) {
-        const kb = new InlineKeyboard().text(
-          t(l, "channel_add_btn"),
-          "add_channel_start"
-        );
-        if (ctx.callbackQuery) {
-          await ctx.editMessageText(t(l, "channel_list_empty"), {
-            reply_markup: kb,
-          });
-        } else {
-          await ctx.reply(t(l, "channel_list_empty"), {reply_markup: kb});
-        }
-        return;
-      }
-
-      // Guard against stale page numbers
-      const safePage = Math.min(Math.max(page, 1), totalPages);
-
-      let msg = `<b>📢 Your Channels (Page ${safePage}/${totalPages})</b>\nSelect a channel to manage plans:\n`;
-
-      const kb = new InlineKeyboard();
-      for (const ch of channels) {
-        msg += `\n• <b>${ch.title}</b> (${ch.planCount} Plans)`;
-        kb.text(ch.title, `manage_ch_${ch._id}`).row();
-      }
-
-      const paginationRow = getPaginationKeyboard(
-        safePage,
-        totalPages,
-        "channels"
-      );
-      if (paginationRow.inline_keyboard.length > 0) {
-        const buttons = paginationRow.inline_keyboard[0];
-        kb.row();
-        buttons.forEach((btn) =>
-          kb.text(btn.text, (btn as any).callback_data || "noop")
-        );
-      }
-
-      kb.text(t(l, "channel_add_btn"), "add_channel_start").row();
-
-      if (ctx.callbackQuery) {
-        try {
-          await ctx.editMessageText(msg, {
-            parse_mode: "HTML",
-            reply_markup: kb,
-          });
-        } catch (err: any) {
-          if (err?.description?.includes("message is not modified")) {
-            await ctx.answerCallbackQuery({text: "Up to date"});
-            return;
-          }
-          throw err;
-        }
-      } else {
-        await ctx.reply(msg, {parse_mode: "HTML", reply_markup: kb});
-      }
-    } catch (error) {
-      console.error("Manage Channels Error:", error);
-      const fallback = "❌ Error loading channels.";
-      if (ctx.callbackQuery) {
-        await ctx.editMessageText(fallback);
-      } else {
-        await ctx.reply(fallback);
-      }
+    // If a stale page is requested after channels were removed, jump to the last page.
+    if (channels.length === 0 && totalCount > 0 && page > totalPages) {
+      return handleManageChannels(ctx, totalPages);
     }
+
+    if (totalCount === 0) {
+      const kb = new InlineKeyboard().text(
+        t(l, "channel_add_btn"),
+        "add_channel_start"
+      );
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(t(l, "channel_list_empty"), {
+          reply_markup: kb,
+        });
+      } else {
+        await ctx.reply(t(l, "channel_list_empty"), { reply_markup: kb });
+      }
+      return;
+    }
+
+    // Guard against stale page numbers
+    const safePage = Math.min(Math.max(page, 1), totalPages);
+
+    let msg = `<b>📢 Your Channels (Page ${safePage}/${totalPages})</b>\nSelect a channel to manage plans:\n`;
+
+    const kb = new InlineKeyboard();
+    for (const ch of channels) {
+      msg += `\n• <b>${ch.title}</b> (${ch.planCount} Plans)`;
+      kb.text(ch.title, `manage_ch_${ch._id}`).row();
+    }
+
+    const paginationRow = getPaginationKeyboard(
+      safePage,
+      totalPages,
+      "channels"
+    );
+    if (paginationRow.inline_keyboard.length > 0) {
+      const buttons = paginationRow.inline_keyboard[0];
+      kb.row();
+      buttons.forEach((btn) =>
+        kb.text(btn.text, (btn as any).callback_data || "noop")
+      );
+    }
+
+    kb.text(t(l, "channel_add_btn"), "add_channel_start").row();
+
+    if (ctx.callbackQuery) {
+      try {
+        await ctx.editMessageText(msg, {
+          parse_mode: "HTML",
+          reply_markup: kb,
+        });
+      } catch (err: any) {
+        if (err?.description?.includes("message is not modified")) {
+          await ctx.answerCallbackQuery({ text: "Up to date" });
+          console.log(`[ManageChannels] Total time: ${Date.now() - startTime}ms (no change)`);
+          return;
+        }
+        throw err;
+      }
+    } else {
+      await ctx.reply(msg, { parse_mode: "HTML", reply_markup: kb });
+    }
+    console.log(`[ManageChannels] Total time: ${Date.now() - startTime}ms`);
+  } catch (error) {
+    console.error("Manage Channels Error:", error);
+    console.log(`[ManageChannels] Total time: ${Date.now() - startTime}ms (error)`);
+    const fallback = "❌ Error loading channels.";
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(fallback);
+    } else {
+      await ctx.reply(fallback);
+    }
+  }
 }
 
 export async function handleChannelDetails(ctx: BotContext, channelId: string) {
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { t } = await import('@/lib/i18n');
-    const l = ctx.user.language as any;
-    const { InlineKeyboard } = await import('grammy');
+  const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+  const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+  const { t } = await import('@/lib/i18n');
+  const l = ctx.user.language as any;
+  const { InlineKeyboard } = await import('grammy');
 
-    const ch = await MerchantChannel.findById(channelId);
-    if (!ch) return ctx.reply("Channel not found.");
+  const ch = await MerchantChannel.findById(channelId);
+  if (!ch) return ctx.reply("Channel not found.");
 
-    const plans = await SubscriptionPlan.find({ channelId: ch._id, isActive: true });
-    const botUsername = ctx.me.username;
+  const plans = await SubscriptionPlan.find({ channelId: ch._id, isActive: true });
+  const botUsername = ctx.me.username;
 
-    // ONE link per channel
-    const shareLink = `https://t.me/${botUsername}?start=ch_${ch._id}`;
+  // ONE link per channel
+  const shareLink = `https://t.me/${botUsername}?start=ch_${ch._id}`;
 
-    let msg = `📢 <b>${ch.title}</b>\n\n`;
-    msg += `🔗 <b>Share Link:</b>\n<code>${shareLink}</code>\n\n`;
+  let msg = `📢 <b>${ch.title}</b>\n\n`;
+  msg += `🔗 <b>Share Link:</b>\n<code>${shareLink}</code>\n\n`;
 
-    if (plans.length > 0) {
-        msg += `<b>Active Plans (${plans.length}):</b>\n`;
-        plans.forEach((p, i) => {
-            msg += `${i + 1}. ${p.name || (p.durationMonths + ' Months')} - ${p.price.toLocaleString()} MMK\n`;
-        });
-    } else {
-        msg += `⚠️ No plans created yet. Add a plan first.`;
-    }
+  if (plans.length > 0) {
+    msg += `<b>Active Plans (${plans.length}):</b>\n`;
+    plans.forEach((p, i) => {
+      msg += `${i + 1}. ${p.name || (p.durationMonths + ' Months')} - ${p.price.toLocaleString()} MMK\n`;
+    });
+  } else {
+    msg += `⚠️ No plans created yet. Add a plan first.`;
+  }
 
-    const kb = new InlineKeyboard()
-        .text(t(l, 'plan_add_btn'), `add_plan_${ch._id}`).row()
-        .text("📋 Manage Plans", `manage_plans_${ch._id}`).row()
-        .text("✏️ Edit Category", `edit_ch_cat_${ch._id}`).row()
-        .text("🔙 Back", `admin_channels_back`);
+  const kb = new InlineKeyboard()
+    .text(t(l, 'plan_add_btn'), `add_plan_${ch._id}`).row()
+    .text("📋 Manage Plans", `manage_plans_${ch._id}`).row()
+    .text("✏️ Edit Category", `edit_ch_cat_${ch._id}`).row()
+    .text("🔙 Back", `admin_channels_back`);
 
-    // Add category to message
-    const catKey = `cat_${ch.category || 'other'}` as any;
-    msg += `\n📁 <b>Category:</b> ${t(l, catKey)}`;
+  // Add category to message
+  const catKey = `cat_${ch.category || 'other'}` as any;
+  msg += `\n📁 <b>Category:</b> ${t(l, catKey)}`;
 
-    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+  await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
 }
 
 // Handle channel link (ch_CHANNELID) - shows plans to user
 export async function handleChannelStart(ctx: BotContext, payload: string) {
-    const channelId = payload.replace('ch_', '');
+  const channelId = payload.replace('ch_', '');
 
-    const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-    const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-    const { InlineKeyboard } = await import('grammy');
+  const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+  const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
+  const { InlineKeyboard } = await import('grammy');
 
-    const ch = await MerchantChannel.findById(channelId);
-    if (!ch) return ctx.reply("❌ Channel not found.");
+  const ch = await MerchantChannel.findById(channelId);
+  if (!ch) return ctx.reply("❌ Channel not found.");
 
-    const plans = await SubscriptionPlan.find({ channelId: ch._id, isActive: true });
+  const plans = await SubscriptionPlan.find({ channelId: ch._id, isActive: true });
 
-    if (plans.length === 0) {
-        return ctx.reply("❌ No subscription plans available for this channel yet.");
-    }
+  if (plans.length === 0) {
+    return ctx.reply("❌ No subscription plans available for this channel yet.");
+  }
 
-    let msg = `📢 <b>${ch.title}</b>\n\nChoose a subscription plan:\n`;
+  let msg = `📢 <b>${ch.title}</b>\n\nChoose a subscription plan:\n`;
 
-    const kb = new InlineKeyboard();
+  const kb = new InlineKeyboard();
 
-    plans.forEach((p) => {
-        const label = `${p.name || (p.durationMonths + ' Months')} - ${p.price.toLocaleString()} MMK`;
-        kb.text(label, `buy_sub_${p._id}`).row();
-    });
+  plans.forEach((p) => {
+    const label = `${p.name || (p.durationMonths + ' Months')} - ${p.price.toLocaleString()} MMK`;
+    kb.text(label, `buy_sub_${p._id}`).row();
+  });
 
-    kb.text("❌ Cancel", "cancel_sub");
+  kb.text("❌ Cancel", "cancel_sub");
 
-    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+  await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
 }
 
