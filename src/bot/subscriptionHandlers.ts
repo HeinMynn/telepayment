@@ -212,11 +212,18 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
 
   if (ctx.callbackQuery) {
     try {
+      await ctx.answerCallbackQuery();
+    } catch (e) { /* ignore timeout */ }
+
+    try {
       await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb });
     } catch (err: any) {
-      if (!err?.description?.includes('message is not modified')) {
-        throw err;
+      // If edit fails (message deleted, etc.), fall back to reply
+      if (err?.description?.includes('message is not modified')) {
+        return; // No change needed
       }
+      // Fallback to reply for other errors
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
     }
   } else {
     await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
