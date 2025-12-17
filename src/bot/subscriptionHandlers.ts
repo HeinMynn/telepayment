@@ -195,7 +195,9 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
   const startTime = Date.now();
   console.log('[ManageChannels] Starting...');
 
+  const importStart = Date.now();
   const { default: MerchantChannel } = await import("@/models/MerchantChannel");
+  console.log(`[ManageChannels] Import took ${Date.now() - importStart}ms`);
 
   const user = ctx.user;
   const l = user.language as any;
@@ -206,6 +208,7 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
 
     // Single roundtrip: paginate + total count + plan counts
     const queryStart = Date.now();
+    console.log(`[ManageChannels] Starting query for merchantId: ${user._id}`);
     const [result] = await MerchantChannel.aggregate([
       { $match: { merchantId: user._id, isActive: true } },
       {

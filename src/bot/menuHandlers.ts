@@ -106,6 +106,7 @@ export async function handleMenuClick(ctx: BotContext) {
 
     // 8. Merchant -> Manage Channels
     if (text === t(l, 'merchant_menu_channels')) {
+        console.log('[MenuHandlers] Manage Channels clicked');
         const { handleManageChannels } = await import('./subscriptionHandlers');
         return handleManageChannels(ctx, 1);
     }

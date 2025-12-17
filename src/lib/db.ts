@@ -21,15 +21,22 @@ if (!cached) {
 
 async function dbConnect() {
     if (cached.conn) {
+        console.log('[DB] Using cached connection');
         return cached.conn;
     }
 
     if (!cached.promise) {
+        console.log('[DB] Creating new connection...');
+        const connectStart = Date.now();
         const opts = {
             bufferCommands: false,
+            maxPoolSize: 10,
+            serverSelectionTimeoutMS: 5000,
+            socketTimeoutMS: 45000,
         };
 
         cached.promise = mongoose.connect(MONGODB_URI!, opts).then((mongoose) => {
+            console.log(`[DB] Connected in ${Date.now() - connectStart}ms`);
             return mongoose;
         });
     }
