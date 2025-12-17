@@ -199,12 +199,11 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
     return;
   }
 
-  let msg = `<b>📢 Your Channels</b>\nSelect a channel to manage plans:\n`;
+  let msg = `<b>📢 Your Channels</b>\nSelect a channel to manage:\n`;
   const kb = new InlineKeyboard();
 
   for (const ch of channels) {
-    const planCount = await SubscriptionPlan.countDocuments({ channelId: ch._id, isActive: true });
-    msg += `\n• <b>${ch.title}</b> (${planCount} Plans)`;
+    msg += `\n• <b>${ch.title}</b>`;
     kb.text(ch.title, `manage_ch_${ch._id}`).row();
   }
 
