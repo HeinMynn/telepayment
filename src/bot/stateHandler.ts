@@ -1,6 +1,16 @@
 import { BotContext } from './types';
-import { getMainMenu, getMerchantMenu, getInvoiceMenu, getBackMerchantKeyboard, getCancelKeyboard, getTopupAmountsKeyboard } from './menus';
+import { InlineKeyboard } from 'grammy';
+import { getMainMenu, getMerchantMenu, getInvoiceMenu, getBackMerchantKeyboard, getCancelKeyboard, getTopupAmountsKeyboard, getProviderKeyboard, getCancelInlineKeyboard } from './menus';
 import { t } from '@/lib/i18n';
+import { logAudit, AUDIT_ACTIONS } from '@/lib/auditLog';
+import { processBroadcast, processUserSearch } from './adminHandlers';
+import Invoice from '@/models/Invoice';
+import Transaction from '@/models/Transaction';
+import User from '@/models/User';
+import MerchantChannel from '@/models/MerchantChannel';
+import SubscriptionPlan from '@/models/SubscriptionPlan';
+import MerchantProfile from '@/models/MerchantProfile';
+import crypto from 'crypto';
 
 export async function handleState(ctx: BotContext) {
     try {
@@ -106,7 +116,6 @@ export async function handleState(ctx: BotContext) {
             else if (text === wave) provider = 'Wave Pay';
             else {
                 // Reprompt
-                const { getProviderKeyboard } = await import('./menus');
                 await ctx.reply(t(l, 'select_provider'), { reply_markup: getProviderKeyboard(user.language) });
                 return;
             }
@@ -188,7 +197,6 @@ export async function handleState(ctx: BotContext) {
             });
 
             // Audit Log
-            const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
             await logAudit(user._id, AUDIT_ACTIONS.ACCOUNT_ADDED, 'account', number, {
                 provider: provider === 'KBZ Pay' ? 'kpay' : 'wavepay',
                 accountNumber: number.slice(-4) // Only log last 4 digits for privacy
@@ -213,7 +221,6 @@ export async function handleState(ctx: BotContext) {
             let type: 'one-time' | 'reusable' = 'one-time';
             if (text === t(l, 'invoice_type_reusable')) type = 'reusable';
 
-            const { default: Invoice } = await import('@/models/Invoice');
             const invoices = await Invoice.find({
                 merchantId: user._id,
                 type: type,
@@ -225,7 +232,6 @@ export async function handleState(ctx: BotContext) {
                     reply_markup: getInvoiceMenu(user.language) // This keyboard has Create, View, Back
                 });
             } else {
-                const { InlineKeyboard } = await import('grammy');
                 const kb = new InlineKeyboard();
 
                 invoices.forEach((inv) => {
@@ -261,7 +267,6 @@ export async function handleState(ctx: BotContext) {
             if (text === kpay) provider = 'kpay';
             else if (text === wave) provider = 'wavepay';
             else {
-                const { getProviderKeyboard } = await import('./menus');
                 await ctx.reply(t(l, 'select_provider_topup'), { reply_markup: getProviderKeyboard(user.language) });
                 return;
             }
@@ -361,7 +366,6 @@ export async function handleState(ctx: BotContext) {
 
             // Ask to select account
             let msg = `Withdrawal Request:\nAmount: ${amount.toLocaleString()}\nFee (5%): ${fee.toLocaleString()}\nTotal Deduction: ${totalDeduction.toLocaleString()}\n\nSelect Account:`;
-            const { InlineKeyboard } = await import('grammy');
             const kb = new InlineKeyboard();
             user.paymentMethods.forEach((pm: any, index: number) => {
                 kb.text(`${pm.provider} - ${pm.accountNumber}`, `confirm_withdraw_acc_${index}`).row();
@@ -377,7 +381,6 @@ export async function handleState(ctx: BotContext) {
 
         if (state === 'awaiting_topup_proof') {
             if (!photo) {
-                const { getCancelInlineKeyboard } = await import('./menus');
                 await ctx.reply("Please upload a photo of the receipt.", {
                     reply_markup: getCancelInlineKeyboard(user.language)
                 });
@@ -391,10 +394,6 @@ export async function handleState(ctx: BotContext) {
                 await ctx.reply("Error: Amount missing. /cancel and try again.");
                 return;
             }
-
-            const { default: Transaction } = await import('@/models/Transaction');
-            const { default: User } = await import('@/models/User');
-            const { InlineKeyboard } = await import('grammy');
 
             // Create Transaction
             const tx = await Transaction.create({
@@ -467,9 +466,6 @@ export async function handleState(ctx: BotContext) {
                 return;
             }
 
-            const { default: Transaction } = await import('@/models/Transaction');
-            const { default: User } = await import('@/models/User');
-
             const tx = await Transaction.findById(txId);
             if (tx && tx.status === 'pending') {
                 tx.status = 'rejected';
@@ -493,13 +489,11 @@ export async function handleState(ctx: BotContext) {
         }
 
         if (state === 'awaiting_broadcast_message') {
-            const { processBroadcast } = await import('./adminHandlers');
             await processBroadcast(ctx, text || '');
             return;
         }
 
         if (state === 'awaiting_admin_user_search') {
-            const { processUserSearch } = await import('./adminHandlers');
             if (text === '/cancel') {
                 await ctx.reply("Cancelled.");
                 ctx.user.interactionState = 'idle';
@@ -576,8 +570,6 @@ export async function handleState(ctx: BotContext) {
             if (type === 'reusable') user.invoiceUsage.reusable += 1;
 
             // Create Invoice
-            const { default: Invoice } = await import('@/models/Invoice');
-            const crypto = await import('crypto');
             const uniqueId = crypto.randomUUID();
 
             await Invoice.create({
@@ -592,7 +584,6 @@ export async function handleState(ctx: BotContext) {
             const botUsername = ctx.me?.username || 'bot';
             const link = `https://t.me/${botUsername}?start=pay_${uniqueId}`;
 
-            const { InlineKeyboard } = await import('grammy');
             const idsKB = new InlineKeyboard()
                 .switchInline("📤 Send Invoice", `invoice_${uniqueId}`)
                 .row()
@@ -614,13 +605,11 @@ export async function handleState(ctx: BotContext) {
             const name = text;
             if (!name) return ctx.reply("Please send text.");
 
-            const { default: MerchantProfile } = await import('@/models/MerchantProfile');
             await MerchantProfile.updateOne({ userId: user._id }, { businessName: name });
 
             user.interactionState = 'idle'; // Reset state
             await user.save();
 
-            const { getMerchantMenu } = await import('./menus');
             await ctx.reply(t(l, 'merchant_edit_name_success').replace('{name}', name), { reply_markup: getMerchantMenu(user.language) });
             return;
         }
@@ -652,7 +641,6 @@ export async function handleState(ctx: BotContext) {
                 return;
             }
 
-            const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
             const plan = await SubscriptionPlan.findById(user.tempData.editPlanId);
             if (!plan) {
                 await ctx.reply("Plan not found.");
@@ -666,7 +654,6 @@ export async function handleState(ctx: BotContext) {
             await plan.save();
 
             // Audit Log
-            const { logAudit, AUDIT_ACTIONS } = await import('@/lib/auditLog');
             await logAudit(user._id, AUDIT_ACTIONS.PLAN_PRICE_CHANGED, 'plan', String(plan._id), {
                 planName: (plan as any).name || `${plan.durationMonths} Month(s)`,
                 oldPrice,
@@ -681,8 +668,6 @@ export async function handleState(ctx: BotContext) {
             await ctx.reply(`✅ Price updated to ${newPrice.toLocaleString()} MMK!`);
 
             // Redirect back to plan list
-            const { InlineKeyboard } = await import('grammy');
-            const { default: MerchantChannel } = await import('@/models/MerchantChannel');
             const plans = await SubscriptionPlan.find({ channelId });
             const ch = await MerchantChannel.findById(channelId);
 
@@ -760,7 +745,6 @@ export async function handleState(ctx: BotContext) {
             user.interactionState = 'awaiting_channel_category';
             await user.save();
 
-            const { InlineKeyboard } = await import('grammy');
             const kb = new InlineKeyboard()
                 .text(t(l, 'cat_entertainment'), 'ch_cat_entertainment').text(t(l, 'cat_education'), 'ch_cat_education').row()
                 .text(t(l, 'cat_business'), 'ch_cat_business').text(t(l, 'cat_gaming'), 'ch_cat_gaming').row()
@@ -778,8 +762,6 @@ export async function handleState(ctx: BotContext) {
             if (channel.toLowerCase() === 'skip') channel = "";
 
             const name = user.tempData?.merchantName || "Unknown Shop";
-
-            const { default: MerchantProfile } = await import('@/models/MerchantProfile');
 
             // Upsert Profile
             const existing = await MerchantProfile.findOne({ userId: user._id });
@@ -802,7 +784,6 @@ export async function handleState(ctx: BotContext) {
             user.tempData = undefined;
             await user.save();
 
-            const { getMerchantMenu } = await import('./menus');
             await ctx.reply(t(l, 'merchant_completed'), { reply_markup: getMerchantMenu(user.language) });
             await ctx.reply(t(l, 'merchant_completed'), { reply_markup: getMerchantMenu(user.language) });
             return;
@@ -818,7 +799,6 @@ export async function handleState(ctx: BotContext) {
             const duration = user.tempData?.planDuration;
             const channelIdStr = user.tempData?.planChannelId;
 
-            const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
             await SubscriptionPlan.create({
                 channelId: channelIdStr,
                 durationMonths: duration,
@@ -830,7 +810,6 @@ export async function handleState(ctx: BotContext) {
             user.tempData = undefined;
             await user.save();
 
-            const { getMerchantMenu } = await import('./menus');
             await ctx.reply(t(l, 'plan_created'), { reply_markup: getMerchantMenu(user.language) });
             return;
         }

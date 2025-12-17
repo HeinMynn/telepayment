@@ -2,10 +2,13 @@ import { BotContext } from './types';
 import { InlineKeyboard } from 'grammy';
 import { getPaginationKeyboard } from './menus';
 import { t } from '@/lib/i18n';
+import Subscription from '@/models/Subscription';
+import MerchantChannel from '@/models/MerchantChannel';
+import SubscriptionPlan from '@/models/SubscriptionPlan';
+import User from '@/models/User';
+import Transaction from '@/models/Transaction';
 
 export async function showUserSubscriptions(ctx: BotContext, page: number, editMessageId?: number) {
-  const { default: Subscription } = await import('@/models/Subscription');
-  const { default: MerchantChannel } = await import('@/models/MerchantChannel'); // Need to populate?
 
   // Mongoose populate is easier if Schema is set up. 
   // Assuming Subscription has ref to 'MerchantChannel'.
@@ -69,11 +72,6 @@ export async function handleSubscriptionStart(ctx: BotContext, payload: string) 
   // Payload: sub_PLANID
   const planId = payload.replace('sub_', '');
 
-  // Import Models
-  const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-  const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-  const { default: User } = await import('@/models/User');
-
   const plan = await SubscriptionPlan.findById(planId).populate('channelId');
 
   if (!plan) {
@@ -104,11 +102,6 @@ export async function handleSubscriptionStart(ctx: BotContext, payload: string) 
 }
 
 export async function handleBuySubscription(ctx: BotContext, planId: string) {
-  const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-  const { default: Subscription } = await import('@/models/Subscription');
-  const { default: Transaction } = await import('@/models/Transaction');
-  const { default: User } = await import('@/models/User');
-
   const plan = await SubscriptionPlan.findById(planId).populate('channelId');
   if (!plan) return ctx.answerCallbackQuery("Plan not found.");
 
@@ -192,7 +185,6 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
 }
 
 export async function handleManageChannels(ctx: BotContext, page: number = 1) {
-  const { default: MerchantChannel } = await import("@/models/MerchantChannel");
 
   const user = ctx.user;
   const l = user.language as any;
@@ -328,11 +320,7 @@ export async function handleManageChannels(ctx: BotContext, page: number = 1) {
 }
 
 export async function handleChannelDetails(ctx: BotContext, channelId: string) {
-  const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-  const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-  const { t } = await import('@/lib/i18n');
   const l = ctx.user.language as any;
-  const { InlineKeyboard } = await import('grammy');
 
   const ch = await MerchantChannel.findById(channelId);
   if (!ch) return ctx.reply("Channel not found.");
@@ -371,10 +359,6 @@ export async function handleChannelDetails(ctx: BotContext, channelId: string) {
 // Handle channel link (ch_CHANNELID) - shows plans to user
 export async function handleChannelStart(ctx: BotContext, payload: string) {
   const channelId = payload.replace('ch_', '');
-
-  const { default: MerchantChannel } = await import('@/models/MerchantChannel');
-  const { default: SubscriptionPlan } = await import('@/models/SubscriptionPlan');
-  const { InlineKeyboard } = await import('grammy');
 
   const ch = await MerchantChannel.findById(channelId);
   if (!ch) return ctx.reply("❌ Channel not found.");
