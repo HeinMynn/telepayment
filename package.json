@@ -6,15 +6,21 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "server": "npx tsx server.ts",
+    "server:dev": "npx tsx watch server.ts"
   },
   "dependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^25.0.0",
+    "@types/node-cron": "^3.0.11",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "express": "^5.2.1",
     "grammy": "^1.38.4",
     "mongoose": "^9.0.1",
     "next": "16.0.8",
+    "node-cron": "^4.2.1",
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "typescript": "^5.9.3"

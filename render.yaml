@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: telepayments-bot
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm run server
+    healthCheckPath: /health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: ADMIN_ID
+        sync: false
