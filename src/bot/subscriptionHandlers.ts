@@ -185,139 +185,44 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
 }
 
 export async function handleManageChannels(ctx: BotContext, page: number = 1) {
+  const l = ctx.user.language as any;
 
-  const user = ctx.user;
-  const l = user.language as any;
+  const channels = await MerchantChannel.find({ merchantId: ctx.user._id, isActive: true });
 
-  try {
-    const PAGE_SIZE = 5;
-    const skip = (page - 1) * PAGE_SIZE;
-
-    // Single roundtrip: paginate + total count + plan counts
-    const [result] = await MerchantChannel.aggregate([
-      { $match: { merchantId: user._id, isActive: true } },
-      {
-        $facet: {
-          total: [{ $count: "count" }],
-          channels: [
-            { $sort: { createdAt: -1, _id: 1 } },
-            { $skip: skip },
-            { $limit: PAGE_SIZE },
-            {
-              $lookup: {
-                from: "subscriptionplans",
-                let: { chId: "$_id" },
-                pipeline: [
-                  {
-                    $match: {
-                      $expr: {
-                        $and: [
-                          { $eq: ["$channelId", "$$chId"] },
-                          { $eq: ["$isActive", true] },
-                        ],
-                      },
-                    },
-                  },
-                  { $count: "count" },
-                ],
-                as: "planStats",
-              },
-            },
-            {
-              $addFields: {
-                planCount: {
-                  $ifNull: [{ $arrayElemAt: ["$planStats.count", 0] }, 0],
-                },
-              },
-            },
-            { $project: { title: 1, planCount: 1 } },
-          ],
-        },
-      },
-      {
-        $project: {
-          totalCount: { $ifNull: [{ $arrayElemAt: ["$total.count", 0] }, 0] },
-          channels: 1,
-        },
-      },
-    ]);
-
-    const totalCount = result?.totalCount ?? 0;
-    const channels = result?.channels ?? [];
-    const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-
-    // If a stale page is requested after channels were removed, jump to the last page.
-    if (channels.length === 0 && totalCount > 0 && page > totalPages) {
-      return handleManageChannels(ctx, totalPages);
-    }
-
-    if (totalCount === 0) {
-      const kb = new InlineKeyboard().text(
-        t(l, "channel_add_btn"),
-        "add_channel_start"
-      );
-      if (ctx.callbackQuery) {
-        await ctx.editMessageText(t(l, "channel_list_empty"), {
-          reply_markup: kb,
-        });
-      } else {
-        await ctx.reply(t(l, "channel_list_empty"), { reply_markup: kb });
-      }
-      return;
-    }
-
-    // Guard against stale page numbers
-    const safePage = Math.min(Math.max(page, 1), totalPages);
-
-    let msg = `<b>📢 Your Channels (Page ${safePage}/${totalPages})</b>\nSelect a channel to manage plans:\n`;
-
-    const kb = new InlineKeyboard();
-    for (const ch of channels) {
-      msg += `\n• <b>${ch.title}</b> (${ch.planCount} Plans)`;
-      kb.text(ch.title, `manage_ch_${ch._id}`).row();
-    }
-
-    const paginationRow = getPaginationKeyboard(
-      safePage,
-      totalPages,
-      "channels"
-    );
-    if (paginationRow.inline_keyboard.length > 0) {
-      const buttons = paginationRow.inline_keyboard[0];
-      kb.row();
-      buttons.forEach((btn) =>
-        kb.text(btn.text, (btn as any).callback_data || "noop")
-      );
-    }
-
-    kb.text(t(l, "channel_add_btn"), "add_channel_start").row();
-
+  if (channels.length === 0) {
+    const kb = new InlineKeyboard().text(t(l, 'channel_add_btn'), 'add_channel_start');
     if (ctx.callbackQuery) {
-      try {
-        await ctx.editMessageText(msg, {
-          parse_mode: "HTML",
-          reply_markup: kb,
-        });
-      } catch (err: any) {
-        if (err?.description?.includes("message is not modified")) {
-          await ctx.answerCallbackQuery({ text: "Up to date" });
-          return;
-        }
+      await ctx.editMessageText(t(l, 'channel_list_empty'), { reply_markup: kb });
+    } else {
+      await ctx.reply(t(l, 'channel_list_empty'), { reply_markup: kb });
+    }
+    return;
+  }
+
+  let msg = `<b>📢 Your Channels</b>\nSelect a channel to manage plans:\n`;
+  const kb = new InlineKeyboard();
+
+  for (const ch of channels) {
+    const planCount = await SubscriptionPlan.countDocuments({ channelId: ch._id, isActive: true });
+    msg += `\n• <b>${ch.title}</b> (${planCount} Plans)`;
+    kb.text(ch.title, `manage_ch_${ch._id}`).row();
+  }
+
+  kb.text(t(l, 'channel_add_btn'), 'add_channel_start').row();
+
+  if (ctx.callbackQuery) {
+    try {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb });
+    } catch (err: any) {
+      if (!err?.description?.includes('message is not modified')) {
         throw err;
       }
-    } else {
-      await ctx.reply(msg, { parse_mode: "HTML", reply_markup: kb });
     }
-  } catch (error) {
-    console.error("Manage Channels Error:", error);
-    const fallback = "❌ Error loading channels.";
-    if (ctx.callbackQuery) {
-      await ctx.editMessageText(fallback);
-    } else {
-      await ctx.reply(fallback);
-    }
+  } else {
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
   }
 }
+
 
 export async function handleChannelDetails(ctx: BotContext, channelId: string) {
   const l = ctx.user.language as any;
