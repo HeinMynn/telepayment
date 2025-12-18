@@ -27,8 +27,34 @@ import mongoose from 'mongoose';
 // Initialize payment listeners
 initPaymentHandlers();
 
-// Register Subscription Buying Callback
-bot.callbackQuery(/^buy_sub_(.+)$/, async (ctx) => {
+// Register Subscription Buying Callback - Show confirmation first
+bot.callbackQuery(/^buy_sub_([a-f0-9]{24})$/, async (ctx) => {
+    const planId = ctx.match[1];
+    await ctx.answerCallbackQuery();
+
+    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+    if (!plan) return ctx.reply("Plan not found.");
+
+    const channel = plan.channelId as any;
+    const planName = (plan as any).name || `${plan.durationMonths} Month(s)`;
+    const user = ctx.user;
+
+    const msg = `🛒 <b>Confirm Purchase</b>\n\n` +
+        `📢 <b>Channel:</b> ${channel.title}\n` +
+        `📦 <b>Plan:</b> ${planName}\n` +
+        `💰 <b>Price:</b> ${plan.price.toLocaleString()} MMK\n\n` +
+        `💳 <b>Your Balance:</b> ${user.balance.toLocaleString()} MMK\n\n` +
+        `Are you sure you want to proceed?`;
+
+    const kb = new InlineKeyboard()
+        .text("✅ Confirm Payment", `confirm_buy_sub_${planId}`)
+        .text("❌ Cancel", `cancel_payment`);
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+});
+
+// Actually process subscription after confirmation
+bot.callbackQuery(/^confirm_buy_sub_([a-f0-9]{24})$/, async (ctx) => {
     await handleBuySubscription(ctx, ctx.match[1]);
 });
 
@@ -419,10 +445,43 @@ bot.callbackQuery(/^plan_dur_(\d+)_(.+)$/, async (ctx) => {
     await ctx.reply(t(ctx.user.language as any, 'plan_price_prompt'), { reply_markup: getCancelKeyboard(ctx.user.language) });
 });
 
-bot.callbackQuery(/^buy_plan_(.+)$/, async (ctx) => {
+// Show confirmation before buying subscription
+bot.callbackQuery(/^buy_plan_([a-f0-9]{24})$/, async (ctx) => {
+    const planId = ctx.match[1];
+    await ctx.answerCallbackQuery();
+
+    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+    if (!plan) return ctx.reply("Plan not found.");
+
+    const channel = plan.channelId as any;
+    const planName = (plan as any).name || `${plan.durationMonths} Month(s)`;
+    const user = ctx.user;
+
+    const msg = `🛒 <b>Confirm Purchase</b>\n\n` +
+        `📢 <b>Channel:</b> ${channel.title}\n` +
+        `📦 <b>Plan:</b> ${planName}\n` +
+        `💰 <b>Price:</b> ${plan.price.toLocaleString()} MMK\n\n` +
+        `💳 <b>Your Balance:</b> ${user.balance.toLocaleString()} MMK\n\n` +
+        `Are you sure you want to proceed?`;
+
+    const kb = new InlineKeyboard()
+        .text("✅ Confirm Payment", `confirm_buy_plan_${planId}`)
+        .text("❌ Cancel", `cancel_payment`);
+
+    await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb });
+});
+
+// Actually process subscription purchase after confirmation
+bot.callbackQuery(/^confirm_buy_plan_([a-f0-9]{24})$/, async (ctx) => {
     const planId = ctx.match[1];
     await ctx.answerCallbackQuery();
     await handleBuySubscription(ctx, planId);
+});
+
+// Cancel payment
+bot.callbackQuery('cancel_payment', async (ctx) => {
+    await ctx.answerCallbackQuery("Payment cancelled.");
+    await ctx.editMessageText("❌ Payment cancelled.");
 });
 
 bot.callbackQuery('add_channel', async (ctx) => {
@@ -551,8 +610,8 @@ bot.callbackQuery(/^manage_plans_(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
 });
 
-// Edit Plan - Show options
-bot.callbackQuery(/^edit_plan_(.+)$/, async (ctx) => {
+// Edit Plan - Show options (match 24-char hex ObjectId only)
+bot.callbackQuery(/^edit_plan_([a-f0-9]{24})$/, async (ctx) => {
     const planId = ctx.match[1];
 
     const plan = await SubscriptionPlan.findById(planId).populate('channelId');
@@ -804,9 +863,35 @@ bot.callbackQuery(/^withdraw_reject_(.+)$/, async (ctx) => {
     await ctx.reply("Please enter a reason for rejecting this withdrawal:", { reply_markup: { force_reply: true } });
 });
 
-bot.callbackQuery(/^buy_plan_(.+)$/, async (ctx) => {
+// Show confirmation before buying from explore (uses handleBuyPlan)
+bot.callbackQuery(/^buy_explore_plan_([a-f0-9]{24})$/, async (ctx) => {
     const planId = ctx.match[1];
     await ctx.answerCallbackQuery();
+
+    const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+    if (!plan) return ctx.reply("Plan not found.");
+
+    const channel = plan.channelId as any;
+    const planName = (plan as any).name || `${plan.durationMonths} Month(s)`;
+    const user = ctx.user;
+
+    const msg = `🛒 <b>Confirm Purchase</b>\n\n` +
+        `📢 <b>Channel:</b> ${channel.title}\n` +
+        `📦 <b>Plan:</b> ${planName}\n` +
+        `💰 <b>Price:</b> ${plan.price.toLocaleString()} MMK\n\n` +
+        `💳 <b>Your Balance:</b> ${user.balance.toLocaleString()} MMK\n\n` +
+        `Are you sure you want to proceed?`;
+
+    const kb = new InlineKeyboard()
+        .text("✅ Confirm Payment", `confirm_explore_plan_${planId}`)
+        .text("❌ Cancel", `cancel_payment`);
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+});
+
+bot.callbackQuery(/^confirm_explore_plan_([a-f0-9]{24})$/, async (ctx) => {
+    const planId = ctx.match[1];
+    await ctx.answerCallbackQuery({ text: "Processing..." });
     await handleBuyPlan(ctx, planId);
 });
 bot.callbackQuery(/^confirm_sub_(.+)$/, async (ctx) => {
