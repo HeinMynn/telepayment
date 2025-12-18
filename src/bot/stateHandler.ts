@@ -667,7 +667,10 @@ export async function handleState(ctx: BotContext) {
 
             await ctx.reply(`✅ Price updated to ${newPrice.toLocaleString()} MMK!`);
 
-            // Redirect back to plan list
+            // Restore merchant menu
+            await ctx.reply("Merchant Menu:", { reply_markup: getMerchantMenu(user.language) });
+
+            // Also show plan list for easy access
             const plans = await SubscriptionPlan.find({ channelId });
             const ch = await MerchantChannel.findById(channelId);
 
