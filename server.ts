@@ -1,3 +1,6 @@
+// Load environment variables for local development
+import 'dotenv/config';
+
 import express from 'express';
 import cron from 'node-cron';
 import { bot } from './src/bot/bot';

@@ -45,6 +45,36 @@ export async function handleMenuClick(ctx: BotContext) {
         return;
     }
 
+    // Main Menu -> Explore
+    if (text === t(l, 'explore_btn') || text === "🔍 Explore" || text.includes("Explore")) {
+        const { InlineKeyboard } = await import('grammy');
+        const MerchantChannel = (await import('@/models/MerchantChannel')).default;
+
+        // Get popular channels (not expired)
+        const now = new Date();
+        const popular = await MerchantChannel.find({
+            isActive: true,
+            isPopular: true,
+            $or: [{ popularExpiresAt: { $gt: now } }, { popularExpiresAt: null }]
+        }).limit(10);
+
+        let msg = t(l, 'explore_title');
+        const kb = new InlineKeyboard();
+
+        // Add Popular button at top if any exist
+        if (popular.length > 0) {
+            kb.text(`🔥 Popular Channels (${popular.length})`, 'explore_popular').row();
+        }
+
+        kb.text(t(l, 'cat_entertainment'), 'explore_cat_entertainment').text(t(l, 'cat_education'), 'explore_cat_education').row()
+            .text(t(l, 'cat_business'), 'explore_cat_business').text(t(l, 'cat_gaming'), 'explore_cat_gaming').row()
+            .text(t(l, 'cat_lifestyle'), 'explore_cat_lifestyle').text(t(l, 'cat_other'), 'explore_cat_other').row()
+            .text(t(l, 'cat_all'), 'explore_cat_all');
+
+        await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+        return;
+    }
+
     // 4. Main Menu -> History (Transactions)
     if (text === t(l, 'menu_history')) {
         await showHistory(ctx, 1);

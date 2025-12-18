@@ -10,6 +10,7 @@ import User from '@/models/User';
 import MerchantChannel from '@/models/MerchantChannel';
 import SubscriptionPlan from '@/models/SubscriptionPlan';
 import MerchantProfile from '@/models/MerchantProfile';
+import Review from '@/models/Review';
 import crypto from 'crypto';
 
 export async function handleState(ctx: BotContext) {
@@ -395,21 +396,14 @@ export async function handleState(ctx: BotContext) {
                 return;
             }
 
-            // Create Transaction
+            // Create Transaction with proof image
             const tx = await Transaction.create({
-                fromUser: user._id, // User is sending money (Topup) -> No, technically 'fromUser' usually tracks flow. For Topup, it's EXTERNAL -> User. 
-                // Let's use 'toUser' = user._id. 'fromUser' = null? or Admin? 
-                // In typical ledger: Topup is System -> User.
-                // But 'Transaction' model requires fromUser? Let's check Schema.
-                // Assuming we track 'deposit' type.
+                fromUser: user._id,
                 toUser: user._id,
                 amount: amount,
                 type: 'topup',
                 status: 'pending',
-                // Store proof file_id? We need a field or put in description/metadata?
-                // Schema has 'snapshotBalanceBefore'?
-                // For now, we just pass fileId to Admin. We don't persist it in DB unless we add field.
-                // "Send the receipt to admin".
+                proofImageId: fileId  // Store receipt for admin to view later
             });
 
             // Find Admin
@@ -688,6 +682,101 @@ export async function handleState(ctx: BotContext) {
                 kb.text("🔙 Back", `manage_ch_${channelId}`).row();
                 await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
             }
+            return;
+        }
+
+        // Edit Channel Description
+        if (state === 'awaiting_channel_description') {
+            if (!text || !user.tempData?.editChannelId) {
+                await ctx.reply("Session expired. Please try again.");
+                user.interactionState = 'idle';
+                await user.save();
+                return;
+            }
+
+            if (text.length > 200) {
+                await ctx.reply("Description too long! Maximum 200 characters. Try again:");
+                return;
+            }
+
+            const ch = await MerchantChannel.findById(user.tempData.editChannelId);
+            if (!ch) {
+                await ctx.reply("Channel not found.");
+                user.interactionState = 'idle';
+                await user.save();
+                return;
+            }
+
+            ch.description = text;
+            await ch.save();
+
+            user.interactionState = 'idle';
+            user.tempData = undefined;
+            await user.save();
+
+            await ctx.reply(`✅ Description updated!`, { reply_markup: getMerchantMenu(user.language) });
+
+            // Show updated channel details
+            const { handleChannelDetails } = await import('./subscriptionHandlers');
+            await handleChannelDetails(ctx, String(ch._id));
+            return;
+        }
+
+        // Review Comment
+        if (state === 'awaiting_review_comment') {
+            if (!user.tempData?.reviewChannelId || !user.tempData?.reviewRating) {
+                await ctx.reply("Session expired. Please try again.");
+                user.interactionState = 'idle';
+                await user.save();
+                return;
+            }
+
+            const channelId = user.tempData.reviewChannelId;
+            const rating = user.tempData.reviewRating;
+            let comment: string | undefined = undefined;
+
+            // Check if user wants to skip
+            if (text && text.toLowerCase() !== '/skip') {
+                if (text.length > 500) {
+                    await ctx.reply("Comment too long! Maximum 500 characters. Try again or /skip:");
+                    return;
+                }
+                comment = text;
+            }
+
+            // Upsert review (one per user per channel)
+            await Review.findOneAndUpdate(
+                { userId: user._id, channelId },
+                { rating, comment, updatedAt: new Date() },
+                { upsert: true, new: true }
+            );
+
+            user.interactionState = 'idle';
+            user.tempData = undefined;
+            await user.save();
+
+            await ctx.reply(`✅ Thank you for your review! ${'⭐'.repeat(rating)}`, { reply_markup: getMainMenu(user.role, user.language) });
+            return;
+        }
+
+        // Admin Popular Pricing
+        if (state === 'awaiting_popular_price') {
+            const { processPopularPrice } = await import('./adminHandlers');
+            await processPopularPrice(ctx, text || '');
+            return;
+        }
+
+        // Admin Topup Rejection Reason
+        if (state === 'awaiting_topup_reject_reason') {
+            const { processTopupRejection } = await import('./adminHandlers');
+            await processTopupRejection(ctx, text || '');
+            return;
+        }
+
+        // Admin Withdrawal Rejection Reason
+        if (state === 'awaiting_withdraw_reject_reason') {
+            const { processWithdrawalRejection } = await import('./adminHandlers');
+            await processWithdrawalRejection(ctx, text || '');
             return;
         }
 

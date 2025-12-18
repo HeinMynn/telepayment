@@ -31,6 +31,7 @@ export const en = {
     settings_btn: "⚙️ Settings",
     channel_plans_btn: "📺 Channel Plans",
     my_subs_btn: "📂 My Subscriptions",
+    explore_btn: "🔍 Explore",
     invite_btn: "🎁 Invite Friends",
     leaderboard_btn: "🏆 Leaderboard",
 

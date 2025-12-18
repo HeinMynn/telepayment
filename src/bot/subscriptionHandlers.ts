@@ -7,6 +7,7 @@ import MerchantChannel from '@/models/MerchantChannel';
 import SubscriptionPlan from '@/models/SubscriptionPlan';
 import User from '@/models/User';
 import Transaction from '@/models/Transaction';
+import Review from '@/models/Review';
 
 export async function showUserSubscriptions(ctx: BotContext, page: number, editMessageId?: number) {
 
@@ -243,6 +244,14 @@ export async function handleChannelDetails(ctx: BotContext, channelId: string) {
   const shareLink = `https://t.me/${botUsername}?start=ch_${ch._id}`;
 
   let msg = `📢 <b>${ch.title}</b>\n\n`;
+
+  // Show description
+  if (ch.description) {
+    msg += `📝 <b>Description:</b> ${ch.description}\n\n`;
+  } else {
+    msg += `📝 <i>No description set</i>\n\n`;
+  }
+
   msg += `🔗 <b>Share Link:</b>\n<code>${shareLink}</code>\n\n`;
 
   if (plans.length > 0) {
@@ -254,11 +263,25 @@ export async function handleChannelDetails(ctx: BotContext, channelId: string) {
     msg += `⚠️ No plans created yet. Add a plan first.`;
   }
 
+  // Show popular status
+  const now = new Date();
+  const isPopularActive = ch.isPopular && (!ch.popularExpiresAt || ch.popularExpiresAt > now);
+  if (isPopularActive) {
+    const expiresText = ch.popularExpiresAt ? `Expires: ${ch.popularExpiresAt.toLocaleDateString()}` : 'No expiry';
+    msg += `\n\n🔥 <b>Popular Status:</b> Active (${expiresText})`;
+  }
+
   const kb = new InlineKeyboard()
     .text(t(l, 'plan_add_btn'), `add_plan_${ch._id}`).row()
     .text("📋 Manage Plans", `manage_plans_${ch._id}`).row()
-    .text("✏️ Edit Category", `edit_ch_cat_${ch._id}`).row()
-    .text("🔙 Back", `admin_channels_back`);
+    .text("✏️ Edit Description", `edit_ch_desc_${ch._id}`).text("📁 Edit Category", `edit_ch_cat_${ch._id}`).row();
+
+  // Add promote button only if not currently popular
+  if (!isPopularActive) {
+    kb.text("🔥 Promote to Popular", `buy_popular_${ch._id}`).row();
+  }
+
+  kb.text("🔙 Back", `admin_channels_back`);
 
   // Add category to message
   const catKey = `cat_${ch.category || 'other'}` as any;
@@ -280,7 +303,41 @@ export async function handleChannelStart(ctx: BotContext, payload: string) {
     return ctx.reply("❌ No subscription plans available for this channel yet.");
   }
 
-  let msg = `📢 <b>${ch.title}</b>\n\nChoose a subscription plan:\n`;
+  // Get subscriber count from Telegram
+  let subscriberCount = 0;
+  try {
+    subscriberCount = await ctx.api.getChatMemberCount(ch.channelId);
+  } catch (e) {
+    // Bot might not be admin or channel might be private
+  }
+
+  // Get average rating
+  const reviewStats = await Review.aggregate([
+    { $match: { channelId: ch._id } },
+    { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } }
+  ]);
+  const avgRating = reviewStats[0]?.avg || 0;
+  const reviewCount = reviewStats[0]?.count || 0;
+
+  let msg = `📢 <b>${ch.title}</b>\n`;
+
+  // Show description if available
+  if (ch.description) {
+    msg += `\n📝 ${ch.description}\n`;
+  }
+
+  // Show subscriber count
+  if (subscriberCount > 0) {
+    msg += `\n👥 <b>${subscriberCount.toLocaleString()}</b> subscribers`;
+  }
+
+  // Show rating
+  if (reviewCount > 0) {
+    const stars = '⭐'.repeat(Math.round(avgRating));
+    msg += `\n${stars} <b>${avgRating.toFixed(1)}</b> (${reviewCount} reviews)`;
+  }
+
+  msg += `\n\nChoose a subscription plan:\n`;
 
   const kb = new InlineKeyboard();
 
@@ -289,6 +346,8 @@ export async function handleChannelStart(ctx: BotContext, payload: string) {
     kb.text(label, `buy_sub_${p._id}`).row();
   });
 
+  // Add review button
+  kb.text("⭐ Reviews", `view_reviews_${ch._id}`).row();
   kb.text("❌ Cancel", "cancel_sub");
 
   await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });

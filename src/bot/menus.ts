@@ -5,7 +5,7 @@ export function getMainMenu(role: string, lang: string = 'en') {
     const l = lang as any;
     const keyboard = new Keyboard()
         .text(t(l, 'balance_btn')).text(t(l, 'topup_btn')).row()
-        .text(t(l, 'my_subs_btn')).row()
+        .text(t(l, 'explore_btn')).text(t(l, 'my_subs_btn')).row()
         .text(t(l, 'history_btn')).text(t(l, 'settings_btn')).row()
         .text(t(l, 'invite_btn')).text(t(l, 'how_to_use_btn')).row()
         .text(t(l, 'leaderboard_btn'));

@@ -19,9 +19,10 @@ import { getMainMenu, getMerchantMenu, getInvoiceMenu, getCancelKeyboard, getPro
 import { handleMenuClick, showHistory, showSettings, startTopupflow, sendVisualOnboarding, handleOnboardingCallback } from './menuHandlers';
 import { showUserSubscriptions, handleManageChannels, handleChannelDetails, handleChannelStart, handleSubscriptionStart, handleBuySubscription } from './subscriptionHandlers';
 import { showInvoices } from './invoiceHandlers';
-import { handleAdminCommand, handleAdminStats, handleAdminBroadcast, handleAdminUsers, handleUnfreezeUser, handleFreezeUser, handleFindUserPrompt } from './adminHandlers';
+import { handleAdminCommand, handleAdminStats, handleAdminBroadcast, handleAdminUsers, handleUnfreezeUser, handleFreezeUser, handleFindUserPrompt, handleFeatureChannel, handleAdminTopups, handleAdminWithdrawals, handleAdminPopular, handleTogglePopular, getPopularPricing, handleAdminPricing, handleSetPriceStart, handleViewTopup, handleApproveTopup, handleRejectTopupStart, handleViewWithdrawal, handleCompleteWithdrawal, handleRejectWithdrawalStart } from './adminHandlers';
 import { handleBuyPlan, handleConfirmSub } from './subscription';
 import { handleInlineQuery } from './inline';
+import Review from '@/models/Review';
 import mongoose from 'mongoose';
 
 // Initialize payment listeners
@@ -158,14 +159,59 @@ bot.callbackQuery(/^onboard_(.+)$/, async (ctx) => {
 bot.callbackQuery('explore_channels', async (ctx) => {
     const l = ctx.user.language as any;
 
-    const kb = new InlineKeyboard()
-        .text(t(l, 'cat_entertainment'), 'explore_cat_entertainment').text(t(l, 'cat_education'), 'explore_cat_education').row()
+    // Get featured channels (admin-selected)
+    // Get popular channels (paid placement, not expired)
+    const now = new Date();
+    const popular = await MerchantChannel.find({
+        isActive: true,
+        isPopular: true,
+        $or: [{ popularExpiresAt: { $gt: now } }, { popularExpiresAt: null }]
+    }).limit(10);
+
+    let msg = t(l, 'explore_title');
+
+    const kb = new InlineKeyboard();
+
+    // Add Popular Channels button at top if any exist
+    if (popular.length > 0) {
+        kb.text(`🔥 Popular Channels (${popular.length})`, 'explore_popular').row();
+    }
+
+    // Category buttons
+    kb.text(t(l, 'cat_entertainment'), 'explore_cat_entertainment').text(t(l, 'cat_education'), 'explore_cat_education').row()
         .text(t(l, 'cat_business'), 'explore_cat_business').text(t(l, 'cat_gaming'), 'explore_cat_gaming').row()
         .text(t(l, 'cat_lifestyle'), 'explore_cat_lifestyle').text(t(l, 'cat_other'), 'explore_cat_other').row()
         .text(t(l, 'cat_all'), 'explore_cat_all');
 
-    await ctx.reply(t(l, 'explore_title'), { parse_mode: 'HTML', reply_markup: kb });
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
     await ctx.answerCallbackQuery();
+});
+
+// Popular Channels list
+bot.callbackQuery('explore_popular', async (ctx) => {
+    const l = ctx.user.language as any;
+    await ctx.answerCallbackQuery();
+
+    const now = new Date();
+    const popular = await MerchantChannel.find({
+        isActive: true,
+        isPopular: true,
+        $or: [{ popularExpiresAt: { $gt: now } }, { popularExpiresAt: null }]
+    }).limit(10);
+
+    if (popular.length === 0) {
+        return ctx.reply("🔥 No popular channels at the moment.");
+    }
+
+    let msg = `🔥 <b>Popular Channels</b>\n\nSelect a channel to view:`;
+    const kb = new InlineKeyboard();
+
+    for (const ch of popular) {
+        kb.text(`⭐ ${ch.title}`, `ch_${ch._id}`).row();
+    }
+    kb.text("🔙 Back", "explore_channels");
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
 });
 
 // Explore by Category (with pagination)
@@ -254,6 +300,74 @@ bot.on('callback_query:data', async (ctx, next) => {
         return handleChannelStart(ctx, payload);
     }
     await next();
+});
+
+// View Reviews for a channel
+bot.callbackQuery(/^view_reviews_([a-f0-9]{24})$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    await ctx.answerCallbackQuery();
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.reply("Channel not found.");
+
+    const reviews = await Review.find({ channelId: ch._id })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .populate('userId', 'firstName username');
+
+    let msg = `⭐ <b>Reviews for ${ch.title}</b>\n\n`;
+
+    if (reviews.length === 0) {
+        msg += `<i>No reviews yet. Be the first to review!</i>`;
+    } else {
+        for (const r of reviews) {
+            const user = r.userId as any;
+            const name = user?.firstName || user?.username || 'Anonymous';
+            const stars = '⭐'.repeat(r.rating);
+            msg += `${stars}\n`;
+            msg += `<b>${name}</b>: ${r.comment || '<i>No comment</i>'}\n\n`;
+        }
+    }
+
+    const kb = new InlineKeyboard()
+        .text("✍️ Write Review", `write_review_${channelId}`).row()
+        .text("🔙 Back", `ch_${channelId}`);
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+});
+
+// Start write review flow - select rating
+bot.callbackQuery(/^write_review_([a-f0-9]{24})$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    await ctx.answerCallbackQuery();
+
+    // Check if user has active/past subscription
+    const hasSub = await Subscription.exists({ userId: ctx.user._id, channelId: new mongoose.Types.ObjectId(channelId) });
+    if (!hasSub) {
+        return ctx.reply("❌ You can only review channels you've subscribed to.");
+    }
+
+    const kb = new InlineKeyboard()
+        .text("⭐", `rate_${channelId}_1`).text("⭐⭐", `rate_${channelId}_2`).text("⭐⭐⭐", `rate_${channelId}_3`).row()
+        .text("⭐⭐⭐⭐", `rate_${channelId}_4`).text("⭐⭐⭐⭐⭐", `rate_${channelId}_5`).row()
+        .text("❌ Cancel", `view_reviews_${channelId}`);
+
+    await ctx.reply("Select your rating:", { reply_markup: kb });
+});
+
+// Handle rating selection
+bot.callbackQuery(/^rate_([a-f0-9]{24})_(\d)$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    const rating = parseInt(ctx.match[2]);
+    await ctx.answerCallbackQuery();
+
+    ctx.user.interactionState = 'awaiting_review_comment';
+    ctx.user.tempData = { reviewChannelId: channelId, reviewRating: rating };
+    await ctx.user.save();
+
+    await ctx.reply(`You selected ${'⭐'.repeat(rating)}\n\nNow add a comment (optional). Type your review or send /skip to skip:`, {
+        reply_markup: getCancelKeyboard(ctx.user.language)
+    });
 });
 
 // Terms Acceptance
@@ -484,6 +598,99 @@ bot.callbackQuery('cancel_payment', async (ctx) => {
     await ctx.editMessageText("❌ Payment cancelled.");
 });
 
+// Buy Popular Placement - Show pricing options
+bot.callbackQuery(/^buy_popular_([a-f0-9]{24})$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    await ctx.answerCallbackQuery();
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.reply("Channel not found.");
+
+    // Check if user owns this channel
+    if (String(ch.merchantId) !== String(ctx.user._id)) {
+        return ctx.reply("❌ This is not your channel.");
+    }
+
+    // Check if popular slots are available
+    const popularCount = await MerchantChannel.countDocuments({ isPopular: true });
+    if (popularCount >= 10) {
+        return ctx.reply("❌ All 10 popular slots are currently filled. Please try again later.");
+    }
+
+    const pricing = await getPopularPricing();
+
+    let msg = `🔥 <b>Promote ${ch.title} to Popular</b>\n\n`;
+    msg += `Popular channels appear at the top of Explore!\n\n`;
+    msg += `<b>Select a duration:</b>\n`;
+
+    const kb = new InlineKeyboard()
+        .text(`1 Month - ${pricing[1].toLocaleString()} MMK`, `confirm_popular_${channelId}_1`).row()
+        .text(`3 Months - ${pricing[3].toLocaleString()} MMK`, `confirm_popular_${channelId}_3`).row()
+        .text(`6 Months - ${pricing[6].toLocaleString()} MMK`, `confirm_popular_${channelId}_6`).row()
+        .text(`12 Months - ${pricing[12].toLocaleString()} MMK`, `confirm_popular_${channelId}_12`).row()
+        .text("❌ Cancel", `manage_ch_${channelId}`);
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+});
+
+// Confirm Popular Purchase - Deduct balance and activate
+bot.callbackQuery(/^confirm_popular_([a-f0-9]{24})_(\d+)$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    const months = parseInt(ctx.match[2]) as 1 | 3 | 6 | 12;
+    await ctx.answerCallbackQuery("Processing...");
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.reply("Channel not found.");
+
+    if (String(ch.merchantId) !== String(ctx.user._id)) {
+        return ctx.reply("❌ This is not your channel.");
+    }
+
+    const pricing = await getPopularPricing();
+    const price = pricing[months];
+    const user = ctx.user;
+
+    // Check balance
+    if (user.balance < price) {
+        return ctx.reply(`❌ Insufficient balance. You need ${price.toLocaleString()} MMK but have ${user.balance.toLocaleString()} MMK.`);
+    }
+
+    // Check slots again
+    const popularCount = await MerchantChannel.countDocuments({ isPopular: true });
+    if (popularCount >= 10 && !ch.isPopular) {
+        return ctx.reply("❌ All 10 popular slots are now filled.");
+    }
+
+    // Deduct balance
+    user.balance -= price;
+    await user.save();
+
+    // Activate popular status
+    const expiresAt = new Date();
+    expiresAt.setMonth(expiresAt.getMonth() + months);
+
+    ch.isPopular = true;
+    ch.popularExpiresAt = expiresAt;
+    await ch.save();
+
+    // Create transaction record
+    await Transaction.create({
+        userId: user._id,
+        type: 'payment',
+        amount: price,
+        status: 'completed',
+        details: { type: 'popular_promotion', channelId: ch._id, months }
+    });
+
+    await ctx.editMessageText(
+        `✅ <b>Success!</b>\n\n` +
+        `🔥 <b>${ch.title}</b> is now Popular!\n` +
+        `📅 Expires: ${expiresAt.toLocaleDateString()}\n\n` +
+        `💰 Paid: ${price.toLocaleString()} MMK`,
+        { parse_mode: 'HTML' }
+    );
+});
+
 bot.callbackQuery('add_channel', async (ctx) => {
     ctx.user.interactionState = 'awaiting_channel_username';
     await ctx.user.save();
@@ -532,8 +739,27 @@ bot.callbackQuery(/^ch_cat_(.+)$/, async (ctx) => {
     await ctx.reply("Merchant Menu:", { reply_markup: getMerchantMenu(user.language) });
 });
 
+// Edit Channel Description - Prompt for new description
+bot.callbackQuery(/^edit_ch_desc_([a-f0-9]{24})$/, async (ctx) => {
+    const channelId = ctx.match[1];
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.answerCallbackQuery({ text: "Channel not found." });
+
+    ctx.user.interactionState = 'awaiting_channel_description';
+    ctx.user.tempData = { editChannelId: channelId };
+    await ctx.user.save();
+
+    await ctx.answerCallbackQuery();
+
+    const currentDesc = ch.description || 'None';
+    await ctx.reply(`📝 Current description: ${currentDesc}\n\nEnter a new description (max 200 characters):`, {
+        reply_markup: getCancelKeyboard(ctx.user.language)
+    });
+});
+
 // Edit Channel Category - Show category selection
-bot.callbackQuery(/^edit_ch_cat_(.+)$/, async (ctx) => {
+bot.callbackQuery(/^edit_ch_cat_([a-f0-9]{24})$/, async (ctx) => {
     const channelId = ctx.match[1];
     const l = ctx.user.language as any;
 
@@ -1179,6 +1405,11 @@ bot.command('admin', async (ctx) => {
     await handleAdminCommand(ctx);
 });
 
+bot.command('feature', async (ctx) => {
+    const channelId = ctx.message?.text?.split(' ')[1];
+    await handleFeatureChannel(ctx, channelId || '');
+});
+
 bot.callbackQuery('admin_stats', async (ctx) => {
     await handleAdminStats(ctx);
 });
@@ -1192,6 +1423,74 @@ bot.callbackQuery('admin_home', async (ctx) => {
     await handleAdminCommand(ctx);
     // Wait, handleAdminCommand uses reply (new message). 
     // We might want to edit. But reuse is fine for MVP.
+});
+
+// Admin Topups
+bot.callbackQuery('admin_topups', async (ctx) => {
+    await handleAdminTopups(ctx);
+});
+
+// View Topup Receipt
+bot.callbackQuery(/^view_topup_([a-f0-9]{24})$/, async (ctx) => {
+    const txId = ctx.match[1];
+    await handleViewTopup(ctx, txId);
+});
+
+// Approve Topup
+bot.callbackQuery(/^approve_topup_([a-f0-9]{24})$/, async (ctx) => {
+    const txId = ctx.match[1];
+    await handleApproveTopup(ctx, txId);
+});
+
+// Reject Topup
+bot.callbackQuery(/^reject_topup_([a-f0-9]{24})$/, async (ctx) => {
+    const txId = ctx.match[1];
+    await handleRejectTopupStart(ctx, txId);
+});
+
+// Admin Withdrawals
+bot.callbackQuery('admin_withdrawals', async (ctx) => {
+    await handleAdminWithdrawals(ctx);
+});
+
+// View Withdrawal Details
+bot.callbackQuery(/^view_withdraw_([a-f0-9]{24})$/, async (ctx) => {
+    const txId = ctx.match[1];
+    await handleViewWithdrawal(ctx, txId);
+});
+
+// Complete Withdrawal
+bot.callbackQuery(/^complete_withdraw_([a-f0-9]{24})$/, async (ctx) => {
+    const txId = ctx.match[1];
+    await handleCompleteWithdrawal(ctx, txId);
+});
+
+// Reject Withdrawal
+bot.callbackQuery(/^reject_withdraw_([a-f0-9]{24})$/, async (ctx) => {
+    const txId = ctx.match[1];
+    await handleRejectWithdrawalStart(ctx, txId);
+});
+
+// Admin Popular Channels
+bot.callbackQuery('admin_popular', async (ctx) => {
+    await handleAdminPopular(ctx);
+});
+
+// Toggle Popular from admin list
+bot.callbackQuery(/^toggle_popular_([a-f0-9]{24})$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    await handleTogglePopular(ctx, channelId);
+});
+
+// Admin Pricing
+bot.callbackQuery('admin_pricing', async (ctx) => {
+    await handleAdminPricing(ctx);
+});
+
+// Set Price 
+bot.callbackQuery(/^set_price_(\d+)$/, async (ctx) => {
+    const months = ctx.match[1];
+    await handleSetPriceStart(ctx, months);
 });
 
 // History
