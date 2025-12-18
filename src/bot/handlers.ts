@@ -695,8 +695,8 @@ bot.callbackQuery(/^edit_plan_price_(.+)$/, async (ctx) => {
     await ctx.user.save();
 
     await ctx.answerCallbackQuery();
-    await ctx.reply(`Current price: ${plan.price.toLocaleString()} MMK\n\nEnter new price (MMK):`, {
-        reply_markup: { force_reply: true }
+    await ctx.reply(`Current price: ${plan.price.toLocaleString()} MMK\n\nEnter new price (MMK) or press Cancel:`, {
+        reply_markup: getCancelKeyboard(ctx.user.language)
     });
 });
 

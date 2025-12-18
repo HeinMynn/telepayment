@@ -682,7 +682,7 @@ export async function handleState(ctx: BotContext) {
                     kb.text(`${status} ${name}`, `edit_plan_${p._id}`).row();
                 });
 
-                kb.text("🔙 Back", `manage_ch_${channelId}`);
+                kb.text("🔙 Back", `manage_ch_${channelId}`).row();
                 await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
             }
             return;
