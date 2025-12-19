@@ -4,7 +4,7 @@ import User from '@/models/User';
 import Transaction from '@/models/Transaction';
 import Subscription from '@/models/Subscription';
 import MerchantChannel from '@/models/MerchantChannel';
-import Settings, { DEFAULT_POPULAR_PRICING } from '@/models/Settings';
+import Settings, { DEFAULT_POPULAR_PRICING, DEFAULT_CATEGORY_FEATURED_PRICING } from '@/models/Settings';
 
 export async function handleAdminCommand(ctx: BotContext) {
     const adminId = process.env.ADMIN_ID;
@@ -643,6 +643,15 @@ export async function getPopularPricing(): Promise<{ 1: number, 3: number, 6: nu
         return setting.value;
     }
     return DEFAULT_POPULAR_PRICING;
+}
+
+// Get Category Featured Pricing from DB (with fallback to defaults)
+export async function getCategoryFeaturedPricing(): Promise<{ 1: number, 3: number, 6: number, 12: number }> {
+    const setting = await Settings.findOne({ key: 'category_featured_pricing' });
+    if (setting?.value) {
+        return setting.value;
+    }
+    return DEFAULT_CATEGORY_FEATURED_PRICING;
 }
 
 // Admin Pricing Management

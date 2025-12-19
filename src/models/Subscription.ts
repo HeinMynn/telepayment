@@ -11,6 +11,11 @@ export interface ISubscription extends Document {
     notifiedWarning?: boolean;
     notifiedFinal?: boolean;
     notifiedExpired?: boolean;
+    // Escrow fields
+    escrowAmount?: number;
+    escrowReleaseAt?: Date;
+    escrowReleased?: boolean;
+    disputed?: boolean;
 }
 
 const SubscriptionSchema = new Schema({
@@ -23,9 +28,16 @@ const SubscriptionSchema = new Schema({
     paymentTxId: { type: Schema.Types.ObjectId, ref: 'Transaction' },
     notifiedWarning: { type: Boolean, default: false },
     notifiedFinal: { type: Boolean, default: false },
-    notifiedExpired: { type: Boolean, default: false }
+    notifiedExpired: { type: Boolean, default: false },
+    // Escrow fields
+    escrowAmount: { type: Number, default: 0 },
+    escrowReleaseAt: { type: Date },
+    escrowReleased: { type: Boolean, default: false },
+    disputed: { type: Boolean, default: false }
 }, { timestamps: true });
 
 SubscriptionSchema.index({ userId: 1, endDate: -1 });
+SubscriptionSchema.index({ escrowReleased: 1, escrowReleaseAt: 1 }); // For escrow release cron
 
 export default mongoose.models.Subscription || mongoose.model<ISubscription>('Subscription', SubscriptionSchema);
+

@@ -5,7 +5,7 @@ import express from 'express';
 import cron from 'node-cron';
 import { bot } from './src/bot/bot';
 import dbConnect from './src/lib/db';
-import { runSubscriptionCron } from './src/cron';
+import { runSubscriptionCron, runPromotionExpiryCron, runEscrowReleaseCron } from './src/cron';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -51,6 +51,8 @@ app.get('/cron/check-subscriptions', async (req, res) => {
     }
 
     await runSubscriptionCron();
+    await runPromotionExpiryCron();
+    await runEscrowReleaseCron();
     res.json({ success: true });
 });
 
@@ -69,12 +71,14 @@ async function start() {
     await import('./src/bot/handlers');
     console.log('[Server] Handlers loaded.');
 
-    // Schedule cron job (runs daily at midnight UTC)
-    cron.schedule('0 0 * * *', async () => {
+    // Schedule cron job (runs daily at 10 AM UTC+6:30 = 3:30 AM UTC)
+    cron.schedule('30 3 * * *', async () => {
         console.log('[Cron] Scheduled job starting...');
         await runSubscriptionCron();
+        await runPromotionExpiryCron();
+        await runEscrowReleaseCron();
     });
-    console.log('[Server] Cron job scheduled: 0 0 * * * (daily at midnight UTC)');
+    console.log('[Server] Cron job scheduled: 30 3 * * * (daily at 10 AM Myanmar Time)');
 
     // Start server
     app.listen(PORT, () => {

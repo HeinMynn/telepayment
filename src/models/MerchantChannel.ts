@@ -9,6 +9,8 @@ export interface IMerchantChannel extends Document {
     isActive: boolean;
     isPopular: boolean;
     popularExpiresAt?: Date;
+    isCategoryFeatured: boolean;
+    categoryFeaturedExpiresAt?: Date;
     category: 'entertainment' | 'education' | 'business' | 'gaming' | 'lifestyle' | 'other';
 }
 
@@ -21,6 +23,8 @@ const MerchantChannelSchema = new Schema({
     isActive: { type: Boolean, default: true },
     isPopular: { type: Boolean, default: false },
     popularExpiresAt: { type: Date },
+    isCategoryFeatured: { type: Boolean, default: false },
+    categoryFeaturedExpiresAt: { type: Date },
     category: { type: String, enum: ['entertainment', 'education', 'business', 'gaming', 'lifestyle', 'other'], default: 'other' }
 }, { timestamps: true });
 
@@ -28,5 +32,7 @@ const MerchantChannelSchema = new Schema({
 MerchantChannelSchema.index({ merchantId: 1, channelId: 1 }, { unique: true });
 MerchantChannelSchema.index({ merchantId: 1, isActive: 1 }); // Optimize "Your Channels" list
 MerchantChannelSchema.index({ isPopular: 1, popularExpiresAt: 1 }); // Optimize Popular query
+MerchantChannelSchema.index({ category: 1, isCategoryFeatured: 1, categoryFeaturedExpiresAt: 1 }); // Optimize category featured query
 
 export default mongoose.models.MerchantChannel || mongoose.model<IMerchantChannel>('MerchantChannel', MerchantChannelSchema);
+

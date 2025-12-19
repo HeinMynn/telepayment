@@ -19,4 +19,13 @@ export const DEFAULT_POPULAR_PRICING = {
     12: 350000   // 12 months
 };
 
+// Default category featured pricing (lower than popular)
+export const DEFAULT_CATEGORY_FEATURED_PRICING = {
+    1: 20000,    // 1 month
+    3: 50000,    // 3 months
+    6: 80000,    // 6 months
+    12: 140000   // 12 months
+};
+
 export default mongoose.models.Settings || mongoose.model<ISettings>('Settings', SettingsSchema);
+

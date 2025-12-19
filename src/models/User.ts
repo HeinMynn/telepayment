@@ -8,7 +8,8 @@ export interface IPaymentMethod {
 
 export interface IUser extends Document {
     telegramId: number;
-    balance: number; // in cents
+    balance: number;
+    frozenBalance: number;
     role: 'user' | 'merchant' | 'admin';
     termsAccepted: boolean;
     termsAcceptedAt?: Date;
@@ -30,11 +31,14 @@ export interface IUser extends Document {
     // Referral
     referrer?: mongoose.Types.ObjectId;
     referralRewardClaimed?: boolean;
+    // Favourites
+    favouriteChannels?: mongoose.Types.ObjectId[];
 }
 
 const UserSchema: Schema = new Schema({
     telegramId: { type: Number, required: true, unique: true, index: true },
     balance: { type: Number, default: 0 },
+    frozenBalance: { type: Number, default: 0 },
     role: { type: String, enum: ['user', 'merchant', 'admin'], default: 'user' },
     termsAccepted: { type: Boolean, default: false },
     termsAcceptedAt: { type: Date },
@@ -59,7 +63,9 @@ const UserSchema: Schema = new Schema({
     },
     // Referral
     referrer: { type: Schema.Types.ObjectId, ref: 'User' },
-    referralRewardClaimed: { type: Boolean, default: false }
+    referralRewardClaimed: { type: Boolean, default: false },
+    // Favourites
+    favouriteChannels: [{ type: Schema.Types.ObjectId, ref: 'MerchantChannel' }]
 }, { timestamps: true });
 
 export default mongoose.models.User || mongoose.model<IUser>('User', UserSchema);

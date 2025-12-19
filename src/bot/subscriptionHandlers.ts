@@ -103,9 +103,24 @@ export async function handleSubscriptionStart(ctx: BotContext, payload: string) 
 }
 
 export async function handleBuySubscription(ctx: BotContext, planId: string) {
-  const plan = await SubscriptionPlan.findById(planId).populate('channelId');
-  if (!plan) return ctx.answerCallbackQuery("Plan not found.");
+  await processSubscription(ctx, planId, 'edit');
+}
 
+/**
+ * Shared subscription processing function used by both:
+ * - Explore flow (handleBuySubscription)
+ * - Deep link flow (handleConfirmSub in subscription.ts)
+ * 
+ * @param responseMode 'edit' = edit existing message, 'reply' = send new message
+ */
+export async function processSubscription(ctx: BotContext, planId: string, responseMode: 'edit' | 'reply' = 'edit') {
+  const plan = await SubscriptionPlan.findById(planId).populate('channelId');
+  if (!plan) {
+    if (ctx.callbackQuery) {
+      return ctx.answerCallbackQuery("Plan not found.");
+    }
+    return ctx.reply("Plan not found.");
+  }
 
   const channelTitle = (plan.channelId as any).title;
   const planName = plan.name || `${plan.durationMonths} Month(s)`;
@@ -114,10 +129,13 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
   if (!user) return;
 
   if (user.balance < plan.price) {
-    return ctx.answerCallbackQuery("Insufficient Balance.");
+    if (ctx.callbackQuery) {
+      return ctx.answerCallbackQuery("Insufficient Balance.");
+    }
+    return ctx.reply("Insufficient Balance.");
   }
 
-  // Deduct
+  // Deduct user balance
   user.balance -= plan.price;
   await user.save();
 
@@ -128,8 +146,12 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
     status: 'active'
   });
 
+  // Calculate escrow release date (7 days from now)
+  const escrowReleaseAt = new Date();
+  escrowReleaseAt.setDate(escrowReleaseAt.getDate() + 7);
+
   if (existingSub) {
-    // Extend
+    // Extend existing subscription
     const now = new Date();
     let baseDate = new Date(existingSub.endDate);
     if (baseDate < now) baseDate = now;
@@ -142,9 +164,13 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
     existingSub.notifiedWarning = false;
     existingSub.notifiedFinal = false;
     existingSub.notifiedExpired = false;
+    // Escrow for extension
+    existingSub.escrowAmount = (existingSub.escrowAmount || 0) + plan.price;
+    existingSub.escrowReleaseAt = escrowReleaseAt;
+    existingSub.escrowReleased = false;
     await existingSub.save();
   } else {
-    // Create Subscription
+    // Create new subscription
     const endDate = new Date();
     endDate.setMonth(endDate.getMonth() + plan.durationMonths);
 
@@ -154,31 +180,52 @@ export async function handleBuySubscription(ctx: BotContext, planId: string) {
       planId: plan._id,
       startDate: new Date(),
       endDate: endDate,
-      status: 'active'
+      status: 'active',
+      // Escrow fields
+      escrowAmount: plan.price,
+      escrowReleaseAt: escrowReleaseAt,
+      escrowReleased: false,
+      disputed: false
     });
   }
 
-  // Create Transaction Record
+  // Create Transaction Record (funds in escrow, not credited yet)
   await Transaction.create({
     fromUser: user._id,
-    toUser: (plan.channelId as any).merchantId, // Pay to Merchant
+    toUser: (plan.channelId as any).merchantId,
     amount: plan.price,
     type: 'subscription',
-    status: 'completed',
-    details: `Sub: ${planName}`
+    status: 'pending',
+    details: `Sub: ${planName} (Escrow: 7 days)`
   });
+
+  // Notify merchant about new subscription
+  try {
+    const merchant = await User.findById((plan.channelId as any).merchantId);
+    if (merchant) {
+      await ctx.api.sendMessage(merchant.telegramId,
+        `🎉 <b>New Subscription!</b>\n\n📢 Channel: ${channelTitle}\n💰 Amount: ${plan.price.toLocaleString()} MMK\n⏳ Funds available in 7 days`,
+        { parse_mode: 'HTML' }
+      );
+    }
+  } catch (e) { /* ignore */ }
 
   // Generate Invite Link
   try {
     const invite = await ctx.api.createChatInviteLink((plan.channelId as any).channelId, {
       member_limit: 1,
-      name: `Sub: ${user.firstName}` // Identify key
+      name: `Sub: ${user.firstName}`
     });
 
     const actionVerbed = existingSub ? "renewed" : "purchased";
     const actionTitle = existingSub ? "Subscription Renewed!" : "Subscription Active!";
+    const successMsg = `✅ <b>${actionTitle}</b>\n\nYou have ${actionVerbed} <b>${planName}</b> for <b>${channelTitle}</b>.\n\n🔗 <a href="${invite.invite_link}">Join Channel Now</a>`;
 
-    await ctx.editMessageText(`✅ <b>${actionTitle}</b>\n\nYou have ${actionVerbed} <b>${planName}</b> for <b>${channelTitle}</b>.\n\n🔗 <a href="${invite.invite_link}">Join Channel Now</a>`, { parse_mode: 'HTML' });
+    if (responseMode === 'edit' && ctx.callbackQuery) {
+      await ctx.editMessageText(successMsg, { parse_mode: 'HTML' });
+    } else {
+      await ctx.reply(successMsg, { parse_mode: 'HTML' });
+    }
   } catch (e) {
     console.error("Failed to generate link:", e);
     await ctx.reply("Subscription active, but failed to generate link. Please contact admin.");
@@ -271,6 +318,14 @@ export async function handleChannelDetails(ctx: BotContext, channelId: string) {
     msg += `\n\n🔥 <b>Popular Status:</b> Active (${expiresText})`;
   }
 
+  // Show category featured status
+  const now2 = new Date();
+  const isCatFeaturedActive = ch.isCategoryFeatured && (!ch.categoryFeaturedExpiresAt || ch.categoryFeaturedExpiresAt > now2);
+  if (isCatFeaturedActive) {
+    const expiresText = ch.categoryFeaturedExpiresAt ? `Expires: ${ch.categoryFeaturedExpiresAt.toLocaleDateString()}` : 'No expiry';
+    msg += `\n⭐ <b>Category Featured:</b> Active (${expiresText})`;
+  }
+
   const kb = new InlineKeyboard()
     .text(t(l, 'plan_add_btn'), `add_plan_${ch._id}`).row()
     .text("📋 Manage Plans", `manage_plans_${ch._id}`).row()
@@ -279,6 +334,11 @@ export async function handleChannelDetails(ctx: BotContext, channelId: string) {
   // Add promote button only if not currently popular
   if (!isPopularActive) {
     kb.text("🔥 Promote to Popular", `buy_popular_${ch._id}`).row();
+  }
+
+  // Add category featured button only if not currently featured in category
+  if (!isCatFeaturedActive) {
+    kb.text("⭐ Promote in Category", `buy_cat_featured_${ch._id}`).row();
   }
 
   kb.text("🔙 Back", `admin_channels_back`);
@@ -345,6 +405,12 @@ export async function handleChannelStart(ctx: BotContext, payload: string) {
     const label = `${p.name || (p.durationMonths + ' Months')} - ${p.price.toLocaleString()} MMK`;
     kb.text(label, `buy_sub_${p._id}`).row();
   });
+
+  // Check if channel is in user's favourites
+  const user = await User.findById(ctx.user._id);
+  const isFavourite = user?.favouriteChannels?.some((fav: any) => fav.toString() === ch._id.toString());
+  const favBtn = isFavourite ? "💔 Remove Favourite" : "❤️ Add Favourite";
+  kb.text(favBtn, `toggle_fav_${ch._id}`).row();
 
   // Add review button
   kb.text("⭐ Reviews", `view_reviews_${ch._id}`).row();

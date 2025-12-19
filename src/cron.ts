@@ -97,3 +97,94 @@ export async function runSubscriptionCron() {
         console.error('[Cron] Error:', err);
     }
 }
+
+// Expire Popular and Category Featured promotions
+import MerchantChannel from './models/MerchantChannel';
+
+export async function runPromotionExpiryCron() {
+    console.log('[Cron] Running promotion expiry check...');
+    const now = new Date();
+
+    try {
+        // 1. Expire Popular promotions
+        const expiredPopular = await MerchantChannel.updateMany(
+            {
+                isPopular: true,
+                popularExpiresAt: { $lte: now }
+            },
+            {
+                $set: { isPopular: false }
+            }
+        );
+
+        // 2. Expire Category Featured promotions
+        const expiredCatFeatured = await MerchantChannel.updateMany(
+            {
+                isCategoryFeatured: true,
+                categoryFeaturedExpiresAt: { $lte: now }
+            },
+            {
+                $set: { isCategoryFeatured: false }
+            }
+        );
+
+        console.log(`[Cron] Promotions expired: popular=${expiredPopular.modifiedCount}, categoryFeatured=${expiredCatFeatured.modifiedCount}`);
+    } catch (err) {
+        console.error('[Cron] Promotion expiry error:', err);
+    }
+}
+
+// Release escrow funds after 7-day hold period
+import User from './models/User';
+
+export async function runEscrowReleaseCron() {
+    console.log('[Cron] Running escrow release check...');
+    const now = new Date();
+
+    try {
+        // Find subscriptions ready for escrow release
+        const pendingReleases = await Subscription.find({
+            escrowReleased: false,
+            escrowReleaseAt: { $lte: now },
+            disputed: { $ne: true },
+            escrowAmount: { $gt: 0 }
+        }).populate('channelId');
+
+        let releasedCount = 0;
+        let releasedTotal = 0;
+
+        for (const sub of pendingReleases) {
+            const channel = sub.channelId as any;
+            if (!channel) continue;
+
+            const merchant = await User.findById(channel.merchantId);
+            if (!merchant) continue;
+
+            const amount = sub.escrowAmount || 0;
+            if (amount <= 0) continue;
+
+            // Release funds to merchant
+            merchant.balance += amount;
+            await merchant.save();
+
+            // Mark as released
+            sub.escrowReleased = true;
+            await sub.save();
+
+            releasedCount++;
+            releasedTotal += amount;
+
+            // Notify merchant (optional)
+            try {
+                await bot.api.sendMessage(merchant.telegramId,
+                    `💰 <b>Funds Released!</b>\n\n💵 ${amount.toLocaleString()} MMK from ${channel.title} is now available.\n\n💳 New Balance: ${merchant.balance.toLocaleString()} MMK`,
+                    { parse_mode: 'HTML' }
+                );
+            } catch (e) { /* ignore */ }
+        }
+
+        console.log(`[Cron] Escrow released: ${releasedCount} subscriptions, ${releasedTotal.toLocaleString()} MMK total`);
+    } catch (err) {
+        console.error('[Cron] Escrow release error:', err);
+    }
+}

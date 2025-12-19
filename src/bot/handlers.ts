@@ -19,7 +19,7 @@ import { getMainMenu, getMerchantMenu, getInvoiceMenu, getCancelKeyboard, getPro
 import { handleMenuClick, showHistory, showSettings, startTopupflow, sendVisualOnboarding, handleOnboardingCallback } from './menuHandlers';
 import { showUserSubscriptions, handleManageChannels, handleChannelDetails, handleChannelStart, handleSubscriptionStart, handleBuySubscription } from './subscriptionHandlers';
 import { showInvoices } from './invoiceHandlers';
-import { handleAdminCommand, handleAdminStats, handleAdminBroadcast, handleAdminUsers, handleUnfreezeUser, handleFreezeUser, handleFindUserPrompt, handleFeatureChannel, handleAdminTopups, handleAdminWithdrawals, handleAdminPopular, handleTogglePopular, getPopularPricing, handleAdminPricing, handleSetPriceStart, handleViewTopup, handleApproveTopup, handleRejectTopupStart, handleViewWithdrawal, handleCompleteWithdrawal, handleRejectWithdrawalStart } from './adminHandlers';
+import { handleAdminCommand, handleAdminStats, handleAdminBroadcast, handleAdminUsers, handleUnfreezeUser, handleFreezeUser, handleFindUserPrompt, handleFeatureChannel, handleAdminTopups, handleAdminWithdrawals, handleAdminPopular, handleTogglePopular, getPopularPricing, handleAdminPricing, handleSetPriceStart, handleViewTopup, handleApproveTopup, handleRejectTopupStart, handleViewWithdrawal, handleCompleteWithdrawal, handleRejectWithdrawalStart, getCategoryFeaturedPricing } from './adminHandlers';
 import { handleBuyPlan, handleConfirmSub } from './subscription';
 import { handleInlineQuery } from './inline';
 import Review from '@/models/Review';
@@ -118,7 +118,7 @@ bot.command('start', async (ctx) => {
     }
     if (!user.termsAccepted) {
         const keyboard = new InlineKeyboard().text(t(user.language as any, 'tos_agree'), 'accept_tos');
-        await ctx.reply(t(user.language as any, 'welcome') + "\n\n" + t(user.language as any, 'tos_text'), { reply_markup: keyboard });
+        await ctx.reply(t(user.language as any, 'welcome') + "\n\n" + t(user.language as any, 'tos_text'), { reply_markup: keyboard, parse_mode: 'HTML' });
     } else {
         // Send Welcome + Main Menu first
         await ctx.reply(t(user.language as any, 'welcome'), { reply_markup: getMainMenu(user.role, user.language) });
@@ -130,6 +130,12 @@ bot.command('start', async (ctx) => {
     }
 });
 
+
+// /tos command - View Terms of Service
+bot.command('tos', async (ctx) => {
+    const user = ctx.user;
+    await ctx.reply(t(user.language as any, 'tos_text'), { parse_mode: 'HTML' });
+});
 
 bot.callbackQuery('cancel_topup_upload', async (ctx) => {
     const user = ctx.user;
@@ -174,16 +180,21 @@ bot.callbackQuery('explore_channels', async (ctx) => {
 
     // Add Popular Channels button at top if any exist
     if (popular.length > 0) {
-        kb.text(`🔥 Popular Channels (${popular.length})`, 'explore_popular').row();
+        kb.text(`🔥 Popular Channels`, 'explore_popular').row();
     }
 
     // Category buttons
     kb.text(t(l, 'cat_entertainment'), 'explore_cat_entertainment').text(t(l, 'cat_education'), 'explore_cat_education').row()
         .text(t(l, 'cat_business'), 'explore_cat_business').text(t(l, 'cat_gaming'), 'explore_cat_gaming').row()
         .text(t(l, 'cat_lifestyle'), 'explore_cat_lifestyle').text(t(l, 'cat_other'), 'explore_cat_other').row()
-        .text(t(l, 'cat_all'), 'explore_cat_all');
+        .text(t(l, 'cat_all'), 'explore_cat_all').row()
+        .text('❤️ My Favourites', 'my_favourites');
 
-    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+    try {
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb });
+    } catch (e) {
+        await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+    }
     await ctx.answerCallbackQuery();
 });
 
@@ -200,7 +211,11 @@ bot.callbackQuery('explore_popular', async (ctx) => {
     }).limit(10);
 
     if (popular.length === 0) {
-        return ctx.reply("🔥 No popular channels at the moment.");
+        try {
+            return ctx.editMessageText("🔥 No popular channels at the moment.");
+        } catch (e) {
+            return ctx.reply("🔥 No popular channels at the moment.");
+        }
     }
 
     let msg = `🔥 <b>Popular Channels</b>\n\nSelect a channel to view:`;
@@ -211,7 +226,11 @@ bot.callbackQuery('explore_popular', async (ctx) => {
     }
     kb.text("🔙 Back", "explore_channels");
 
-    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+    try {
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb });
+    } catch (e) {
+        await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+    }
 });
 
 // Explore by Category (with pagination)
@@ -221,31 +240,62 @@ bot.callbackQuery(/^explore_cat_(.+?)(?:_page_(\d+))?$/, async (ctx) => {
     const pageSize = 5;
 
     const l = ctx.user.language as any;
+    const now = new Date();
 
-    // Build query
+    // Build query for non-featured channels (will be randomized)
     const query: any = { isActive: true };
     if (category !== 'all') {
         query.category = category;
     }
 
-    const channels = await MerchantChannel.find(query).skip((page - 1) * pageSize).limit(pageSize + 1); // +1 to check if more
-    const hasMore = channels.length > pageSize;
-    if (hasMore) channels.pop();
-
-    // Filter by having plans
-    const validChannels: any[] = [];
-    for (const ch of channels) {
-        const count = await SubscriptionPlan.countDocuments({ channelId: ch._id, isActive: true });
-        if (count > 0) validChannels.push(ch);
+    // Get category featured channels first (only on page 1)
+    let featuredChannels: any[] = [];
+    if (page === 1 && category !== 'all') {
+        featuredChannels = await MerchantChannel.find({
+            isActive: true,
+            category: category,
+            isCategoryFeatured: true,
+            $or: [{ categoryFeaturedExpiresAt: { $gt: now } }, { categoryFeaturedExpiresAt: null }]
+        }).limit(3);
     }
 
-    if (validChannels.length === 0 && page === 1) {
+    // Get other channels (random order using aggregation)
+    const skipCount = (page - 1) * pageSize;
+    const otherChannels = await MerchantChannel.aggregate([
+        { $match: { ...query, _id: { $nin: featuredChannels.map(c => c._id) } } },
+        { $sample: { size: pageSize * 3 } } // Get more for filtering
+    ]);
+
+    // Filter by having plans
+    const validFeatured: any[] = [];
+    for (const ch of featuredChannels) {
+        const count = await SubscriptionPlan.countDocuments({ channelId: ch._id, isActive: true });
+        if (count > 0) validFeatured.push(ch);
+    }
+
+    const validOthers: any[] = [];
+    for (const ch of otherChannels) {
+        if (validOthers.length >= pageSize) break;
+        const count = await SubscriptionPlan.countDocuments({ channelId: ch._id, isActive: true });
+        if (count > 0) validOthers.push(ch);
+    }
+
+    const hasMore = otherChannels.length > pageSize;
+
+    if (validFeatured.length === 0 && validOthers.length === 0 && page === 1) {
         await ctx.answerCallbackQuery({ text: t(l, 'explore_no_channels'), show_alert: true });
         return;
     }
 
     const kb = new InlineKeyboard();
-    validChannels.forEach(ch => {
+
+    // Show featured channels first with star icon
+    validFeatured.forEach(ch => {
+        kb.text(`⭐ ${ch.title}`, `ch_${ch._id}`).row();
+    });
+
+    // Show other channels (randomized)
+    validOthers.forEach(ch => {
         kb.text(`📢 ${ch.title}`, `ch_${ch._id}`).row();
     });
 
@@ -254,7 +304,7 @@ bot.callbackQuery(/^explore_cat_(.+?)(?:_page_(\d+))?$/, async (ctx) => {
     if (hasMore) kb.text('Next ▶️', `explore_cat_${category}_page_${page + 1}`);
     if (page > 1 || hasMore) kb.row();
 
-    kb.row().text('🔙 Categories', 'explore_channels');
+    kb.text('🔙 Categories', 'explore_channels');
 
     const catLabel = category === 'all' ? t(l, 'cat_all') : t(l, `cat_${category}` as any);
     const msg = `🔍 <b>${catLabel}</b>\n\nPage ${page}`;
@@ -274,6 +324,82 @@ bot.callbackQuery(/^ch_(.+)$/, async (ctx) => {
     const channelId = ctx.match[1];
     await ctx.answerCallbackQuery();
     await handleChannelStart(ctx, `ch_${channelId}`);
+});
+
+// Toggle Favourite
+bot.callbackQuery(/^toggle_fav_([a-f0-9]{24})$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    const user = await User.findById(ctx.user._id);
+    if (!user) return ctx.answerCallbackQuery("Error");
+
+    const favs = user.favouriteChannels || [];
+    const index = favs.findIndex((f: any) => f.toString() === channelId);
+
+    let nowFavourite: boolean;
+    if (index > -1) {
+        favs.splice(index, 1);
+        nowFavourite = false;
+        await ctx.answerCallbackQuery("💔 Removed from favourites");
+    } else {
+        favs.push(new mongoose.Types.ObjectId(channelId));
+        nowFavourite = true;
+        await ctx.answerCallbackQuery("❤️ Added to favourites!");
+    }
+
+    user.favouriteChannels = favs;
+    await user.save();
+
+    // Update the button in place by editing the reply markup
+    try {
+        const msg = ctx.callbackQuery.message;
+        if (msg && 'reply_markup' in msg && msg.reply_markup) {
+            const newKb = msg.reply_markup.inline_keyboard.map(row =>
+                row.map(btn => {
+                    const cbBtn = btn as any;
+                    if (cbBtn.callback_data === `toggle_fav_${channelId}`) {
+                        return {
+                            text: nowFavourite ? "💔 Remove Favourite" : "❤️ Add Favourite",
+                            callback_data: cbBtn.callback_data
+                        };
+                    }
+                    return btn;
+                })
+            );
+            await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: newKb } });
+        }
+    } catch (e) { }
+});
+
+// My Favourites
+bot.callbackQuery('my_favourites', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const l = ctx.user.language as any;
+
+    const user = await User.findById(ctx.user._id).populate('favouriteChannels');
+    const favs = user?.favouriteChannels || [];
+
+    if (favs.length === 0) {
+        const kb = new InlineKeyboard().text("🔙 Back", "explore_channels");
+        try {
+            return ctx.editMessageText("❤️ <b>My Favourites</b>\n\nYou haven't added any favourite channels yet.\n\nTap ❤️ on any channel to add it here!", { parse_mode: 'HTML', reply_markup: kb });
+        } catch (e) {
+            return ctx.reply("❤️ <b>My Favourites</b>\n\nYou haven't added any favourite channels yet.\n\nTap ❤️ on any channel to add it here!", { parse_mode: 'HTML', reply_markup: kb });
+        }
+    }
+
+    const kb = new InlineKeyboard();
+    (favs as any[]).forEach((ch: any) => {
+        if (ch && ch.title) {
+            kb.text(`❤️ ${ch.title}`, `ch_${ch._id}`).row();
+        }
+    });
+    kb.text("🔙 Back", "explore_channels");
+
+    try {
+        await ctx.editMessageText("❤️ <b>My Favourites</b>\n\nYour favourite channels:", { parse_mode: 'HTML', reply_markup: kb });
+    } catch (e) {
+        await ctx.reply("❤️ <b>My Favourites</b>\n\nYour favourite channels:", { parse_mode: 'HTML', reply_markup: kb });
+    }
 });
 
 // Invite / Referral
@@ -419,7 +545,7 @@ bot.command('become_merchant', async (ctx) => {
     }
 
     const keyboard = new InlineKeyboard().text(t(user.language as any, 'merchant_agree'), 'accept_merchant_rules');
-    await ctx.reply(t(user.language as any, 'merchant_rules'), { reply_markup: keyboard });
+    await ctx.reply(t(user.language as any, 'merchant_rules'), { reply_markup: keyboard, parse_mode: 'HTML' });
 });
 
 bot.callbackQuery('accept_merchant_rules', async (ctx) => {
@@ -522,7 +648,7 @@ bot.callbackQuery('add_channel_start', async (ctx) => {
     await user.save();
 
     await ctx.answerCallbackQuery();
-    await ctx.reply(t(user.language as any, 'channel_add_prompt'), { reply_markup: getCancelKeyboard(user.language) });
+    await ctx.reply(t(user.language as any, 'channel_add_prompt'), { reply_markup: getCancelKeyboard(user.language), parse_mode: 'HTML' });
 });
 
 bot.callbackQuery(/^manage_ch_(.+)$/, async (ctx) => {
@@ -691,11 +817,92 @@ bot.callbackQuery(/^confirm_popular_([a-f0-9]{24})_(\d+)$/, async (ctx) => {
     );
 });
 
+// Buy Category Featured - Show pricing options
+bot.callbackQuery(/^buy_cat_featured_([a-f0-9]{24})$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    await ctx.answerCallbackQuery();
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.reply("Channel not found.");
+
+    if (String(ch.merchantId) !== String(ctx.user._id)) {
+        return ctx.reply("❌ This is not your channel.");
+    }
+
+    const pricing = await getCategoryFeaturedPricing();
+    const catKey = `cat_${ch.category || 'other'}`;
+
+    let msg = `⭐ <b>Promote in ${ch.category?.charAt(0).toUpperCase()}${ch.category?.slice(1)} Category</b>\n\n`;
+    msg += `Featured channels appear at the top of their category!\n\n`;
+    msg += `<b>Select a duration:</b>\n`;
+
+    const kb = new InlineKeyboard()
+        .text(`1 Month - ${pricing[1].toLocaleString()} MMK`, `confirm_cat_featured_${channelId}_1`).row()
+        .text(`3 Months - ${pricing[3].toLocaleString()} MMK`, `confirm_cat_featured_${channelId}_3`).row()
+        .text(`6 Months - ${pricing[6].toLocaleString()} MMK`, `confirm_cat_featured_${channelId}_6`).row()
+        .text(`12 Months - ${pricing[12].toLocaleString()} MMK`, `confirm_cat_featured_${channelId}_12`).row()
+        .text("❌ Cancel", `manage_ch_${channelId}`);
+
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+});
+
+// Confirm Category Featured Purchase
+bot.callbackQuery(/^confirm_cat_featured_([a-f0-9]{24})_(\d+)$/, async (ctx) => {
+    const channelId = ctx.match[1];
+    const months = parseInt(ctx.match[2]) as 1 | 3 | 6 | 12;
+    await ctx.answerCallbackQuery("Processing...");
+
+    const ch = await MerchantChannel.findById(channelId);
+    if (!ch) return ctx.reply("Channel not found.");
+
+    if (String(ch.merchantId) !== String(ctx.user._id)) {
+        return ctx.reply("❌ This is not your channel.");
+    }
+
+    const pricing = await getCategoryFeaturedPricing();
+    const price = pricing[months];
+    const user = ctx.user;
+
+    // Check balance
+    if (user.balance < price) {
+        return ctx.reply(`❌ Insufficient balance. You need ${price.toLocaleString()} MMK but have ${user.balance.toLocaleString()} MMK.`);
+    }
+
+    // Deduct balance
+    user.balance -= price;
+    await user.save();
+
+    // Activate category featured
+    const expiresAt = new Date();
+    expiresAt.setMonth(expiresAt.getMonth() + months);
+
+    ch.isCategoryFeatured = true;
+    ch.categoryFeaturedExpiresAt = expiresAt;
+    await ch.save();
+
+    // Create transaction
+    await Transaction.create({
+        userId: user._id,
+        type: 'payment',
+        amount: price,
+        status: 'completed',
+        details: { type: 'category_featured', channelId: ch._id, months, category: ch.category }
+    });
+
+    await ctx.editMessageText(
+        `✅ <b>Success!</b>\n\n` +
+        `⭐ <b>${ch.title}</b> is now Featured in ${ch.category}!\n` +
+        `📅 Expires: ${expiresAt.toLocaleDateString()}\n\n` +
+        `💰 Paid: ${price.toLocaleString()} MMK`,
+        { parse_mode: 'HTML' }
+    );
+});
+
 bot.callbackQuery('add_channel', async (ctx) => {
     ctx.user.interactionState = 'awaiting_channel_username';
     await ctx.user.save();
     await ctx.answerCallbackQuery();
-    await ctx.reply(t(ctx.user.language as any, 'channel_add_prompt'), { reply_markup: getCancelKeyboard(ctx.user.language) });
+    await ctx.reply(t(ctx.user.language as any, 'channel_add_prompt'), { reply_markup: getCancelKeyboard(ctx.user.language), parse_mode: 'HTML' });
 });
 
 // Channel Category Selection (after channel verification)
@@ -1170,8 +1377,25 @@ bot.callbackQuery('withdraw_start', async (ctx) => {
 
     user.interactionState = 'awaiting_withdraw_amount';
     await user.save();
-    await ctx.reply("Enter amount to withdraw (Min 10,000):");
+
+    const kb = new InlineKeyboard().text("❌ Cancel", "cancel_withdraw");
+    await ctx.reply("💸 Enter amount to withdraw:\n\n• Minimum: 10,000 MMK\n• Fee: 5%", { reply_markup: kb });
     await ctx.answerCallbackQuery();
+});
+
+// Cancel Withdraw
+bot.callbackQuery('cancel_withdraw', async (ctx) => {
+    const user = ctx.user;
+    user.interactionState = 'idle';
+    user.tempData = undefined;
+    await user.save();
+
+    await ctx.answerCallbackQuery("Cancelled");
+    try {
+        await ctx.editMessageText("❌ Withdrawal cancelled.");
+    } catch (e) { }
+
+    await ctx.reply("Cancelled.", { reply_markup: getMainMenu(user.role, user.language) });
 });
 
 // Admin Callbacks
@@ -1408,6 +1632,129 @@ bot.command('admin', async (ctx) => {
 bot.command('feature', async (ctx) => {
     const channelId = ctx.message?.text?.split(' ')[1];
     await handleFeatureChannel(ctx, channelId || '');
+});
+
+// /freezefund merchantID amount - Admin freezes funds from merchant
+bot.command('freezefund', async (ctx) => {
+    const user = ctx.user;
+    const adminId = process.env.ADMIN_ID;
+
+    // Check if admin
+    const isAdmin = (adminId && user.telegramId.toString() === adminId) || user.role === 'admin';
+    if (!isAdmin) {
+        return ctx.reply("❌ Unauthorized.");
+    }
+
+    const args = ctx.message?.text?.split(' ');
+    if (!args || args.length < 3) {
+        return ctx.reply("❌ Usage: /freezefund <merchantTelegramId> <amount>\n\nExample: /freezefund 123456789 50000");
+    }
+
+    const merchantTelegramId = parseInt(args[1]);
+    const amount = parseInt(args[2]);
+
+    if (isNaN(merchantTelegramId) || isNaN(amount) || amount <= 0) {
+        return ctx.reply("❌ Invalid merchant ID or amount.");
+    }
+
+    const merchant = await User.findOne({ telegramId: merchantTelegramId });
+    if (!merchant) {
+        return ctx.reply("❌ Merchant not found.");
+    }
+
+    if (merchant.role !== 'merchant') {
+        return ctx.reply("❌ This user is not a merchant.");
+    }
+
+    if (merchant.balance < amount) {
+        return ctx.reply(`❌ Merchant only has ${merchant.balance.toLocaleString()} MMK available. Cannot freeze ${amount.toLocaleString()} MMK.`);
+    }
+
+    // Freeze the funds (move from available to frozen)
+    merchant.balance -= amount;
+    merchant.frozenBalance = (merchant.frozenBalance || 0) + amount;
+    await merchant.save();
+
+    // Create a transaction record
+    await Transaction.create({
+        fromUser: merchant._id,
+        toUser: user._id,
+        type: 'payment',
+        amount: amount,
+        status: 'completed',
+        details: { type: 'fund_freeze', reason: 'Admin freeze', adminId: user.telegramId }
+    });
+
+    // Notify merchant
+    try {
+        await ctx.api.sendMessage(merchantTelegramId,
+            `🔒 <b>Funds Frozen</b>\n\n💰 Amount: <b>${amount.toLocaleString()} MMK</b>\n\nYour funds have been frozen by admin due to a dispute or investigation. Contact support for details.`,
+            { parse_mode: 'HTML' }
+        );
+    } catch (e) { }
+
+    const total = merchant.balance + merchant.frozenBalance;
+    await ctx.reply(`✅ <b>Funds Frozen</b>\n\n👤 Merchant: ${merchant.firstName || merchant.telegramId}\n\n💵 Available: ${merchant.balance.toLocaleString()} MMK\n🔒 Frozen: ${merchant.frozenBalance.toLocaleString()} MMK\n💰 Total: ${total.toLocaleString()} MMK`, { parse_mode: 'HTML' });
+});
+
+// /unfreeze merchantID amount - Admin unfreezes funds for merchant
+bot.command('unfreeze', async (ctx) => {
+    const user = ctx.user;
+    const adminId = process.env.ADMIN_ID;
+
+    // Check if admin
+    const isAdmin = (adminId && user.telegramId.toString() === adminId) || user.role === 'admin';
+    if (!isAdmin) {
+        return ctx.reply("❌ Unauthorized.");
+    }
+
+    const args = ctx.message?.text?.split(' ');
+    if (!args || args.length < 3) {
+        return ctx.reply("❌ Usage: /unfreeze <merchantTelegramId> <amount>\n\nExample: /unfreeze 123456789 50000");
+    }
+
+    const merchantTelegramId = parseInt(args[1]);
+    const amount = parseInt(args[2]);
+
+    if (isNaN(merchantTelegramId) || isNaN(amount) || amount <= 0) {
+        return ctx.reply("❌ Invalid merchant ID or amount.");
+    }
+
+    const merchant = await User.findOne({ telegramId: merchantTelegramId });
+    if (!merchant) {
+        return ctx.reply("❌ Merchant not found.");
+    }
+
+    const frozenBalance = merchant.frozenBalance || 0;
+    if (frozenBalance < amount) {
+        return ctx.reply(`❌ Merchant only has ${frozenBalance.toLocaleString()} MMK frozen. Cannot unfreeze ${amount.toLocaleString()} MMK.`);
+    }
+
+    // Unfreeze the funds (move from frozen to available)
+    merchant.frozenBalance = frozenBalance - amount;
+    merchant.balance += amount;
+    await merchant.save();
+
+    // Create a transaction record
+    await Transaction.create({
+        fromUser: user._id,
+        toUser: merchant._id,
+        type: 'payment',
+        amount: amount,
+        status: 'completed',
+        details: { type: 'fund_unfreeze', reason: 'Admin unfreeze', adminId: user.telegramId }
+    });
+
+    // Notify merchant
+    try {
+        await ctx.api.sendMessage(merchantTelegramId,
+            `🔓 <b>Funds Released!</b>\n\n💰 Amount: <b>${amount.toLocaleString()} MMK</b>\n\nYour frozen funds have been released by admin.`,
+            { parse_mode: 'HTML' }
+        );
+    } catch (e) { }
+
+    const total = merchant.balance + merchant.frozenBalance;
+    await ctx.reply(`✅ <b>Funds Unfrozen</b>\n\n👤 Merchant: ${merchant.firstName || merchant.telegramId}\n\n💵 Available: ${merchant.balance.toLocaleString()} MMK\n🔒 Frozen: ${merchant.frozenBalance.toLocaleString()} MMK\n💰 Total: ${total.toLocaleString()} MMK`, { parse_mode: 'HTML' });
 });
 
 bot.callbackQuery('admin_stats', async (ctx) => {

@@ -14,8 +14,55 @@ export async function handleMenuClick(ctx: BotContext) {
     // Navigation Logic
 
     // 1. Main Menu -> Balance
-    if (text === t(l, 'menu_balance')) {
-        await ctx.reply(t(l, 'balance_text', { amount: user.balance.toLocaleString() }), {
+    if (text === t(l, 'menu_balance') || text === t(l, 'balance_btn') || text.includes('Balance')) {
+        let balanceMsg: string;
+        const frozenBalance = user.frozenBalance || 0;
+
+        if (user.role === 'merchant') {
+            // Query pending escrow from subscriptions for this merchant's channels
+            const { default: MerchantChannel } = await import('@/models/MerchantChannel');
+            const { default: Subscription } = await import('@/models/Subscription');
+
+            const channels = await MerchantChannel.find({ merchantId: user._id });
+            const channelIds = channels.map(c => c._id);
+
+            // Get unreleased escrow subscriptions (escrowReleased: false OR not set)
+            const pendingSubs = await Subscription.find({
+                channelId: { $in: channelIds },
+                $or: [
+                    { escrowReleased: false },
+                    { escrowReleased: { $exists: false } }
+                ],
+                disputed: { $ne: true },
+                escrowAmount: { $gt: 0 }
+            });
+
+            const pendingBalance = pendingSubs.reduce((sum, sub) => sum + (sub.escrowAmount || 0), 0);
+            const pendingCount = pendingSubs.length;
+
+            // Calculate days range for pending
+            const now = new Date();
+            let pendingInfo = '';
+            if (pendingCount > 0) {
+                const maxDays = Math.max(...pendingSubs.map(sub => {
+                    const releaseAt = new Date(sub.escrowReleaseAt || now);
+                    return Math.max(0, Math.ceil((releaseAt.getTime() - now.getTime()) / (1000 * 3600 * 24)));
+                }));
+                pendingInfo = ` (${pendingCount} subs, ${maxDays} days)`;
+            }
+
+            const total = user.balance + pendingBalance + frozenBalance;
+            balanceMsg = `💰 <b>Your Balance</b>\n\n💵 Available: <b>${user.balance.toLocaleString()} MMK</b>\n⏳ Pending: <b>${pendingBalance.toLocaleString()} MMK</b>${pendingInfo}`;
+            if (frozenBalance > 0) {
+                balanceMsg += `\n🔒 Frozen: <b>${frozenBalance.toLocaleString()} MMK</b>`;
+            }
+            balanceMsg += `\n━━━━━━━━━━━━━━━\n💰 Total: <b>${total.toLocaleString()} MMK</b>`;
+        } else {
+            balanceMsg = `💰 Your Balance: <b>${user.balance.toLocaleString()} MMK</b>`;
+        }
+
+        await ctx.reply(balanceMsg, {
+            parse_mode: 'HTML',
             reply_markup: {
                 inline_keyboard: [
                     [{ text: t(l, 'menu_topup'), callback_data: 'start_topup_flow' }],
@@ -27,7 +74,7 @@ export async function handleMenuClick(ctx: BotContext) {
     }
 
     // 2. Main Menu -> Topup
-    if (text === t(l, 'menu_topup')) {
+    if (text === t(l, 'topup_btn') || text === t(l, 'menu_topup') || text.includes('Top Up') || text.includes('Top up')) {
         return startTopupflow(ctx);
     }
 
@@ -63,13 +110,14 @@ export async function handleMenuClick(ctx: BotContext) {
 
         // Add Popular button at top if any exist
         if (popular.length > 0) {
-            kb.text(`🔥 Popular Channels (${popular.length})`, 'explore_popular').row();
+            kb.text(`🔥 Popular Channels`, 'explore_popular').row();
         }
 
         kb.text(t(l, 'cat_entertainment'), 'explore_cat_entertainment').text(t(l, 'cat_education'), 'explore_cat_education').row()
             .text(t(l, 'cat_business'), 'explore_cat_business').text(t(l, 'cat_gaming'), 'explore_cat_gaming').row()
             .text(t(l, 'cat_lifestyle'), 'explore_cat_lifestyle').text(t(l, 'cat_other'), 'explore_cat_other').row()
-            .text(t(l, 'cat_all'), 'explore_cat_all');
+            .text(t(l, 'cat_all'), 'explore_cat_all').row()
+            .text('❤️ My Favourites', 'my_favourites');
 
         await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
         return;
@@ -281,8 +329,8 @@ export async function startTopupflow(ctx: BotContext) {
     const l = user.language as any;
     const { getProviderKeyboard } = await import('./menus'); // Import local helper
 
-    await ctx.reply(t(l, 'topup_intro'));
-    await ctx.reply(t(l, 'select_provider_topup'), { reply_markup: getProviderKeyboard(user.language) });
+    await ctx.reply(t(l, 'topup_intro'), { parse_mode: 'HTML' });
+    await ctx.reply(t(l, 'select_provider_topup'), { reply_markup: getProviderKeyboard(user.language), parse_mode: 'HTML' });
 
     // Set State
     user.interactionState = 'awaiting_topup_provider';
@@ -414,7 +462,7 @@ export async function sendVisualOnboarding(ctx: BotContext) {
 
     await ctx.replyWithPhoto(new InputFile(path.join(process.cwd(), 'assets/guide_1.png')), {
         caption: t(l, 'onboard_cap_1'),
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
         reply_markup: kb
     });
 }
@@ -450,7 +498,7 @@ export async function handleOnboardingCallback(ctx: BotContext, step: string) {
             type: 'photo',
             media: new InputFile(mediaPath),
             caption: caption,
-            parse_mode: 'Markdown'
+            parse_mode: 'HTML'
         }, { reply_markup: kb });
     } catch (e) { /* ignore */ }
 }

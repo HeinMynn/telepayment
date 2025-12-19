@@ -95,7 +95,7 @@ export function initPaymentHandlers() {
 
                 // Prompt Top Up
                 const { InlineKeyboard } = await import('grammy');
-                const kb = new InlineKeyboard().text("➕ Top Up", "start_topup_flow");
+                const kb = new InlineKeyboard().text("💳 Top Up", "start_topup_flow");
                 await ctx.reply("Insufficient funds. Please top up to continue.", { reply_markup: kb });
                 return;
             }
